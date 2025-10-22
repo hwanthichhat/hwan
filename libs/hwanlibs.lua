@@ -758,7 +758,118 @@ function HwanUI:CreateWindow(title, opts)
             task.defer(function() pcall(updateContentCanvas) end)
             return instance
         end
-    
+
+          -- CreateKeybind
+function tab:CreateKeybind(label, defaultKey, callback)
+    local row = new("Frame", {Parent = self.Content, Size = UDim2.new(1,0,0,36), BackgroundTransparency = 1})
+    local lbl = new("TextLabel", {Parent = row, Text = label or "Keybind", Size = UDim2.new(0.65, -8, 1, 0), Position = UDim2.new(0,8,0,0), BackgroundTransparency = 1, TextColor3 = cfg.Theme.Text, Font = Enum.Font.SourceSansBold, TextSize = 17, TextXAlignment = Enum.TextXAlignment.Left})
+    local btn = new("TextButton", {Parent = row, Size = UDim2.new(0.34, -8, 1, 0), Position = UDim2.new(0.66, 4, 0, 0), BackgroundColor3 = cfg.Theme.Btn, TextColor3 = cfg.Theme.Text, Text = "", Font = Enum.Font.SourceSansBold, TextSize = 17, AutoButtonColor=false, TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center})
+    new("UICorner", {Parent = btn, CornerRadius = UDim.new(0,8)})
+
+    addConn(btn.MouseEnter:Connect(function() if UserInputService.MouseEnabled then tween(btn, {BackgroundColor3 = brightenColor(cfg.Theme.Btn, 0.06)}, 0.10) end end))
+    addConn(btn.MouseLeave:Connect(function() tween(btn, {BackgroundColor3 = cfg.Theme.Btn}, 0.10) end))
+
+    local function displayForKey(k)
+        if not k then
+            btn.Text = "..."
+            return
+        end
+        if typeof(k) == "EnumItem" and k.EnumType == Enum.KeyCode then
+            btn.Text = k.Name
+        elseif type(k) == "string" then
+            btn.Text = k
+        else
+            local ok, s = pcall(function() return tostring(k) end)
+            btn.Text = (ok and s) and s or "..."
+        end
+    end
+
+    local boundKey = nil
+    if defaultKey then
+        if typeof(defaultKey) == "EnumItem" and defaultKey.EnumType == Enum.KeyCode then
+            boundKey = defaultKey
+        elseif type(defaultKey) == "string" then
+            boundKey = defaultKey
+        end
+    end
+    displayForKey(boundKey)
+
+    local listening = false
+    local inputConn
+
+    local function stopListening()
+        if inputConn then
+            pcall(function() inputConn:Disconnect() end)
+            inputConn = nil
+        end
+        listening = false
+        tween(btn, {BackgroundColor3 = cfg.Theme.Btn}, 0.08)
+        displayForKey(boundKey)
+    end
+
+    local function startListening()
+        if listening then return end
+        listening = true
+        btn.Text = "..."
+        tween(btn, {BackgroundColor3 = brightenColor(cfg.Theme.Btn, 0.12)}, 0.06)
+
+        inputConn = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+            if gameProcessed then return end
+            if input.KeyCode == Enum.KeyCode.Escape then
+                boundKey = nil
+                pcall(callback, nil)
+                stopListening()
+                return
+            end
+
+            if input.UserInputType == Enum.UserInputType.Keyboard then
+                boundKey = input.KeyCode
+                pcall(callback, boundKey)
+                stopListening()
+                return
+            end
+
+            if input.UserInputType ~= Enum.UserInputType.Keyboard then
+                local desc = tostring(input.UserInputType):gsub("Enum.UserInputType.","")
+                boundKey = desc
+                pcall(callback, boundKey)
+                stopListening()
+                return
+            end
+        end)
+    end
+
+    addConn(btn.MouseButton1Click:Connect(function()
+        if not listening then
+            startListening()
+        else
+            stopListening()
+        end
+    end))
+
+    addConn(btn.MouseButton2Click:Connect(function()
+        boundKey = nil
+        displayForKey(boundKey)
+        pcall(callback, nil)
+    end))
+
+    pcall(hideTextNodesIn, row)
+    task.defer(function() pcall(updateContentCanvas) end)
+
+    return {
+        UI = row,
+        Set = function(v)
+            if v == nil then boundKey = nil
+            elseif typeof(v) == "EnumItem" and v.EnumType == Enum.KeyCode then boundKey = v
+            elseif type(v) == "string" then boundKey = v
+            else boundKey = v
+            end
+            displayForKey(boundKey)
+        end,
+        Get = function() return boundKey end
+    }
+end
+        
             -- CreateSlider
         function tab:CreateSlider(label, minVal, maxVal, default, callback)
             minVal = minVal or 0; maxVal = maxVal or 100; default = (default == nil) and minVal or default
