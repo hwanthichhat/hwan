@@ -734,14 +734,16 @@ function HwanUI:CreateWindow(title, opts)
                 if instance and window and window._dropdownStates then window._dropdownStates[instance] = true end
             end
 
+            local opening = false
             local openConn = btn.MouseButton1Click:Connect(function()
-                openConn:Disable()
-                pcall(function() showPanel() end)
+                if opening then return end
+                opening = true
+                pcall(showPanel)
                 task.wait(0.02)
-                openConn:Enable()
+                opening = false
             end)
             addConn(openConn)
-
+            
             instance = { UI = frame, Set = function(v) btn.Text = tostring(v) end, Open = showPanel, Close = closePanel, IsOpen = function() return (panel ~= nil) end, Button = btn, uid = uid }
             if window then
                 window._dropdownInstances = window._dropdownInstances or {}
