@@ -1326,69 +1326,83 @@ function HwanUI:CreateWindow(title, opts)
 
     captureOriginalProperties()
 
-    local visible = true
-    local function toggleVisible(newV)
-        visible = newV == nil and not visible or newV
-        local animDur = 0.28
-        local fadeDur = 0.12
+local animCounter = 0
+local visible = true
+local function toggleVisible(newV)
+    animCounter = animCounter + 1
+    local token = animCounter
+
+    visible = newV == nil and not visible or newV
+    local animDur = 0.28
+    local fadeDur = 0.12
+
+    -- đóng tất cả dropdown trước khi đổi trạng thái
+    for i,inst in ipairs(window._dropdownInstances or {}) do
+        pcall(function() if inst and inst.Close then inst.Close() end end)
+    end
+
+    if visible then
+        -- show
+        Frame.ClipsDescendants = true
+        Frame.Visible = true
+        Frame.Size = UDim2.new(0, cfg.Width, 0, 0)
+
+        captureOriginalProperties()
+        setAllTransparency(1, 0)
+
+        tween(Frame, {Size = UDim2.new(0, cfg.Width, 0, cfg.Height)}, animDur, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+
+        pcall(function()
+            tween(HwanInner, {Size = UDim2.new(1,-6,1,-6)}, 0.12)
+            task.wait(0.12)
+            tween(HwanInner, {Size = UDim2.new(1,-8,1,-8)}, 0.12)
+        end)
+
+        task.delay(animDur * 0.9, function()
+            if token ~= animCounter then return end
+            for d, vals in pairs(_origUI) do
+                if token ~= animCounter then break end
+                if d and d.Parent then
+                    pcall(function()
+                        if vals.TextTransparency ~= nil and (d.TextTransparency ~= nil) then tweenToTransparency(d, {TextTransparency = vals.TextTransparency}, 0.18) end
+                        if vals.BackgroundTransparency ~= nil and (d.BackgroundTransparency ~= nil) then tweenToTransparency(d, {BackgroundTransparency = vals.BackgroundTransparency}, 0.18) end
+                        if vals.StrokeTransparency ~= nil and d:IsA("UIStroke") then tweenToTransparency(d, {Transparency = vals.StrokeTransparency}, 0.18) end
+                        if vals.ImageTransparency ~= nil and (d.ImageTransparency ~= nil) then tweenToTransparency(d, {ImageTransparency = vals.ImageTransparency}, 0.18) end
+                    end)
+                else
+                    _origUI[d] = nil
+                end
+            end
+            task.delay(0.18 + 0.02, function()
+                if token ~= animCounter then return end
+                pcall(function() Frame.ClipsDescendants = false end)
+            end)
+        end)
+    else
+        -- hide
+        captureOriginalProperties()
+        setAllTransparency(1, fadeDur)
 
         for i,inst in ipairs(window._dropdownInstances or {}) do
             pcall(function() if inst and inst.Close then inst.Close() end end)
         end
 
-        if visible then
-            Frame.ClipsDescendants = true
-            Frame.Visible = true
-            Frame.Size = UDim2.new(0, cfg.Width, 0, 0)
-
-            captureOriginalProperties()
-            setAllTransparency(1, 0)
-
-            tween(Frame, {Size = UDim2.new(0, cfg.Width, 0, cfg.Height)}, animDur, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-
+        Frame.ClipsDescendants = true
+        task.delay(fadeDur + 0.02, function()
+            if token ~= animCounter then return end
+            tween(Frame, {Size = UDim2.new(0, cfg.Width, 0, 0)}, animDur, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
             pcall(function()
                 tween(HwanInner, {Size = UDim2.new(1,-6,1,-6)}, 0.12)
                 task.wait(0.12)
                 tween(HwanInner, {Size = UDim2.new(1,-8,1,-8)}, 0.12)
             end)
-
-            task.delay(animDur * 0.9, function()
-                for d, vals in pairs(_origUI) do
-                    if d and d.Parent then
-                        pcall(function()
-                            if vals.TextTransparency ~= nil and (d.TextTransparency ~= nil) then tweenToTransparency(d, {TextTransparency = vals.TextTransparency}, 0.18) end
-                            if vals.BackgroundTransparency ~= nil and (d.BackgroundTransparency ~= nil) then tweenToTransparency(d, {BackgroundTransparency = vals.BackgroundTransparency}, 0.18) end
-                            if vals.StrokeTransparency ~= nil and d:IsA("UIStroke") then tweenToTransparency(d, {Transparency = vals.StrokeTransparency}, 0.18) end
-                            if vals.ImageTransparency ~= nil and (d.ImageTransparency ~= nil) then tweenToTransparency(d, {ImageTransparency = vals.ImageTransparency}, 0.18) end
-                        end)
-                    else
-                        _origUI[d] = nil
-                    end
-                end
-                task.delay(0.18 + 0.02, function() pcall(function() Frame.ClipsDescendants = false end) end)
+            task.delay(animDur + 0.02, function()
+                if token ~= animCounter then return end
+                pcall(function() Frame.Visible = false; Frame.ClipsDescendants = false end)
             end)
-        else
-            captureOriginalProperties()
-            setAllTransparency(1, fadeDur)
-
-            for i,inst in ipairs(window._dropdownInstances or {}) do
-                pcall(function() if inst and inst.Close then inst.Close() end end)
-            end
-
-            Frame.ClipsDescendants = true
-            task.delay(fadeDur + 0.02, function()
-                tween(Frame, {Size = UDim2.new(0, cfg.Width, 0, 0)}, animDur, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-                pcall(function()
-                    tween(HwanInner, {Size = UDim2.new(1,-6,1,-6)}, 0.12)
-                    task.wait(0.12)
-                    tween(HwanInner, {Size = UDim2.new(1,-8,1,-8)}, 0.12)
-                end)
-                task.delay(animDur + 0.02, function()
-                    pcall(function() Frame.Visible = false; Frame.ClipsDescendants = false end)
-                end)
-            end)
-        end
+        end)
     end
+end
 
     addConn(HwanBtn.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
