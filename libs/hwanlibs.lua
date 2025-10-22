@@ -203,9 +203,27 @@ function HwanUI:CreateWindow(title, opts)
     new("UICorner", {Parent = TabsHolder, CornerRadius = UDim.new(0,8)})
 
     local dividerY = 100
-    local divider0 = new("Frame", {Parent = Frame, Name = "Divider0", Size = UDim2.new(1,-16,0,2), Position = UDim2.new(0,8,0,dividerY + 8), BackgroundColor3 = cfg.Theme.TabBg, BorderSizePixel = 0})
-    refs.Divider0 = divider0
-    divider0.ClipsDescendants = true
+local divider0 = new("Frame", {Parent = Frame, Name = "Divider0", Size = UDim2.new(1,-16,0,2), Position = UDim2.new(0,8,0,dividerY + 8), BackgroundColor3 = Color3.fromRGB(255,255,255), BorderSizePixel = 0})
+refs.Divider0 = divider0
+divider0.ClipsDescendants = true
+
+-- gradient highlight chạy ngang
+local dividerGrad = new("UIGradient", {Parent = divider0})
+dividerGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(255,255,255)),
+    ColorSequenceKeypoint.new(0.45, Color3.fromRGB(220,220,220)),
+    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255,255,255)),
+    ColorSequenceKeypoint.new(0.55, Color3.fromRGB(220,220,220)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(255,255,255)),
+})
+dividerGrad.Rotation = 0
+
+local gradSpeed = 60 -- tăng giảm để nhanh/chậm
+addConn(RunService.RenderStepped:Connect(function(dt)
+    pcall(function()
+        dividerGrad.Rotation = (dividerGrad.Rotation + dt * gradSpeed) % 360
+    end)
+end))
 
     local InfoBar = new("Frame", {Parent = screenGui, Name = "InfoBar", Size = UDim2.new(0, 360, 0, 36), Position = UDim2.new(1, -376, 0, 16), BackgroundColor3 = cfg.Theme.InfoBg, BorderSizePixel = 0, ZIndex = 50})
     refs.InfoBar = InfoBar
@@ -466,24 +484,24 @@ function HwanUI:CreateWindow(title, opts)
         end end))
 
         -- CreateButton
-        function tab:CreateButton(label, callback)
-            label = label or "Button"
-            local row = new("Frame", {Parent = self.Content, Size = UDim2.new(1,0,0,36), BackgroundTransparency = 1})
-            local lbl = new("TextLabel", {Parent = row, Text = label, Size = UDim2.new(0.65, -8, 1, 0), Position = UDim2.new(0,8,0,0), BackgroundTransparency = 1, TextColor3 = cfg.Theme.Text, Font = Enum.Font.SourceSansBold, TextSize = 17, TextXAlignment = Enum.TextXAlignment.Left})
-            local b = new("TextButton", {Parent = row, Size = UDim2.new(0.34, -8, 1, 0), Position = UDim2.new(0.66, 4, 0, 0), BackgroundColor3 = cfg.Theme.Btn, TextColor3 = cfg.Theme.Text, Text = label, Font = Enum.Font.SourceSansBold, TextSize = 17, AutoButtonColor=false, TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center, TextScaled = false})
-            new("UICorner", {Parent = b, CornerRadius = UDim.new(0,8)})
-            addConn(b.MouseEnter:Connect(function() if UserInputService.MouseEnabled then tween(b, {BackgroundColor3 = brightenColor(cfg.Theme.Btn, 0.06)}, 0.10) end end))
-            addConn(b.MouseLeave:Connect(function() tween(b, {BackgroundColor3 = cfg.Theme.Btn}, 0.10) end))
-            addConn(b.MouseButton1Click:Connect(function()
-                if callback then pcall(callback) end
-                tween(b, {BackgroundColor3 = brightenColor(cfg.Theme.Btn, 0.12)}, 0.06)
-                task.wait(0.06)
-                tween(b, {BackgroundColor3 = cfg.Theme.Btn}, 0.12)
-            end))
-            pcall(hideTextNodesIn, row)
-            task.defer(function() pcall(updateContentCanvas) end)
-            return b
-        end
+function tab:CreateButton(label, callback)
+    label = (label and label ~= "" and label) or "Button"
+    local row = new("Frame", {Parent = self.Content, Size = UDim2.new(1,0,0,36), BackgroundTransparency = 1})
+    local lbl = new("TextLabel", {Parent = row, Text = label, Size = UDim2.new(0.65, -8, 1, 0), Position = UDim2.new(0,8,0,0), BackgroundTransparency = 1, TextColor3 = cfg.Theme.Text, Font = Enum.Font.SourceSansBold, TextSize = 17, TextXAlignment = Enum.TextXAlignment.Left})
+    local b = new("TextButton", {Parent = row, Size = UDim2.new(0.34, -8, 1, 0), Position = UDim2.new(0.66, 4, 0, 0), BackgroundColor3 = cfg.Theme.Btn, TextColor3 = cfg.Theme.Text, Text = label, Font = Enum.Font.SourceSansBold, TextSize = 17, AutoButtonColor=false, TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center, TextScaled = false})
+    new("UICorner", {Parent = b, CornerRadius = UDim.new(0,8)})
+    addConn(b.MouseEnter:Connect(function() if UserInputService.MouseEnabled then tween(b, {BackgroundColor3 = brightenColor(cfg.Theme.Btn, 0.06)}, 0.10) end end))
+    addConn(b.MouseLeave:Connect(function() tween(b, {BackgroundColor3 = cfg.Theme.Btn}, 0.10) end))
+    addConn(b.MouseButton1Click:Connect(function()
+        if callback then pcall(callback) end
+        tween(b, {BackgroundColor3 = brightenColor(cfg.Theme.Btn, 0.12)}, 0.06)
+        task.wait(0.06)
+        tween(b, {BackgroundColor3 = cfg.Theme.Btn}, 0.12)
+    end))
+    pcall(hideTextNodesIn, row)
+    task.defer(function() pcall(updateContentCanvas) end)
+    return b
+end
 
         -- CreateToggle
         function tab:CreateToggle(label, initial, callback)
