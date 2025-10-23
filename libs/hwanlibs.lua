@@ -279,9 +279,31 @@ function Hwan:CreateWindow(opts)
         TextScaled = false,
     })
     refs.TitleMain = TitleMain
-    local titleGrad = new("UIGradient", {Parent = TitleMain})
-    titleGrad.Color = ColorSequence.new(cfg.Theme.NameGradientColors)
-    titleGrad.Rotation = 0
+    -- replace existing titleGrad creation + assignment with this block
+local function toColorSequence(v)
+    if typeof(v) == "ColorSequence" then return v end
+    if type(v) == "table" and #v > 0 then
+        -- if table of Color3 -> build keypoints evenly spaced
+        if typeof(v[1]) == "Color3" then
+            local pts = {}
+            local n = #v
+            for i, c in ipairs(v) do
+                local pos = (n == 1) and 0 or ((i-1) / (n-1))
+                table.insert(pts, ColorSequenceKeypoint.new(pos, c))
+            end
+            return ColorSequence.new(pts)
+        end
+        -- if table already contains keypoints, try to use them
+        local ok = pcall(function() return ColorSequence.new(v) end)
+        if ok then return ColorSequence.new(v) end
+    end
+    -- fallback white->white
+    return ColorSequence.new({ ColorSequenceKeypoint.new(0, Color3.new(1,1,1)), ColorSequenceKeypoint.new(1, Color3.new(1,1,1)) })
+end
+
+local titleGrad = new("UIGradient", {Parent = TitleMain})
+titleGrad.Color = toColorSequence(cfg.Theme.NameGradientColors or {Color3.fromRGB(255,255,255), Color3.fromRGB(120,120,120), Color3.fromRGB(0,0,0)})
+titleGrad.Rotation = 0
 
     local TabsFrame = new("Frame", {Parent = TitleFrame, Size = UDim2.new(1,0,0,36), Position = UDim2.new(0,0,0,56), BackgroundTransparency = 1})
     local TabsHolder = new("Frame", {Parent = TabsFrame, Size = UDim2.new(1, 0, 1, 0), Position = UDim2.new(0, 0, 0, 0), BackgroundTransparency = 1})
