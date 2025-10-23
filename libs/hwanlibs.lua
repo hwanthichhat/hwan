@@ -1,4 +1,5 @@
--- Hwan (Hwan UI library)
+-- Hwan (Hwan UI library) - FIXED (text align, slider richtext, button text separation,
+-- notifications stacking, dropdown header, togglekey string support, defaults, MainDivider, theme name/unify)
 -- Usage:
 -- local Hwan = loadstring(game:HttpGet('https://raw.githubusercontent.com/hwanthichhat/hwan/main/libs/hwanlibs.lua'))()
 -- local Window = Hwan:CreateWindow({ Name = "My Window", KeySystem = false, ConfigurationSaving = { Enabled = true, FileName = "MyUI" }, Theme = "Dark" })
@@ -27,6 +28,21 @@ local THEMES = {
         InfoInner = Color3.fromRGB(18,18,18),
         Btn = Color3.fromRGB(50,50,50),
         ToggleBg = Color3.fromRGB(80,80,80),
+
+        -- Name UI unified
+        NameText = Color3.fromRGB(0,0,0),
+        NameStroke = Color3.fromRGB(255,255,255),
+        NameGradientColors = { Color3.fromRGB(255,255,255), Color3.fromRGB(120,120,120), Color3.fromRGB(0,0,0) },
+        NameGradientSpeed = 1.0,
+
+        -- hover brightness for elements (except InfoBar/HwanBtn/Notifications)
+        ElemHoverBrightness = 0.06,
+
+        -- notification sizes
+        NotificationHeaderSize = 18,
+        NotificationBodySize = 18,
+        NotificationMaxActive = 5,
+        NotificationGap = 8,
     }
 }
 
@@ -98,17 +114,33 @@ local function escapeHtml(s)
     return tostring(s):gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;")
 end
 
+-- Clean previous
+if _G.Hwan then
+    if _G.Hwan.conns then
+        for _, c in ipairs(_G.Hwan.conns) do
+            pcall(function()
+                if c and c.Disconnect then c:Disconnect() end
+                if c and c.disconnect then c:disconnect() end
+            end)
+        end
+    end
+    if _G.Hwan.screenGui and _G.Hwan.screenGui.Parent then
+        pcall(function() _G.Hwan.screenGui:Destroy() end)
+    end
+    _G.Hwan = nil
+end
+
 -- Defaults
 local DEFAULT = {
     Width = 300,
-    Height = 500,
+    Height = 400,
     Title = "HWAN HUB",
     ShowToggleIcon = true,
-    KeySystem = true, -- enable key system by default, can be overridden by opts
+    KeySystem = false,
     KeySettings = nil,
-    Theme = "Dark", -- default theme name
+    Theme = "Dark",
     Corner = UDim.new(0,12),
-    ToggleKey = Enum.KeyCode.LeftAlt,
+    ToggleKey = "K",
     ConfigurationSaving = { Enabled = false, FolderName = nil, FileName = nil },
 }
 
@@ -144,7 +176,7 @@ function Hwan:CreateWindow(opts)
         if opts.Name then cfg.Title = opts.Name end
         for k,v in pairs(opts) do
             if k == "Theme" and type(v) == "table" then
-                -- handled below to merge with theme table correctly
+                -- handled below
             elseif k == "Theme" and type(v) == "string" then
                 -- handled below
             else
@@ -153,7 +185,7 @@ function Hwan:CreateWindow(opts)
         end
     end
 
-    -- Normalize theme option: accept string (theme name) or table (custom)
+    -- Normalize theme option
     if type(opts) == "table" and opts.Theme then
         if type(opts.Theme) == "string" then
             cfg.Theme = opts.Theme
@@ -168,12 +200,10 @@ function Hwan:CreateWindow(opts)
             cfg.Theme = {}
             for kk,vv in pairs(THEMES[tname]) do cfg.Theme[kk] = vv end
         else
-            -- fallback to Dark if unknown
             cfg.Theme = {}
             for kk,vv in pairs(THEMES.Dark) do cfg.Theme[kk] = vv end
         end
     elseif type(cfg.Theme) == "table" then
-        -- merge with Dark defaults to ensure complete set
         local merged = {}
         for kk,vv in pairs(THEMES.Dark) do merged[kk] = vv end
         for kk,vv in pairs(cfg.Theme) do merged[kk] = vv end
@@ -183,12 +213,11 @@ function Hwan:CreateWindow(opts)
         for kk,vv in pairs(THEMES.Dark) do cfg.Theme[kk] = vv end
     end
 
-    -- Normalize key system + settings (migration & compatibility)
+    -- KeySettings normalization
     cfg.KeySettings = cfg.KeySettings or {}
     if type(opts) == "table" and opts.KeySettings ~= nil then
         cfg.KeySystem = true
     end
-    -- migrate legacy fields if present in opts
     if cfg.AccessKey and (cfg.KeySettings.Key == nil or #cfg.KeySettings.Key == 0) then
         cfg.KeySettings.Key = cfg.KeySettings.Key or {}
         table.insert(cfg.KeySettings.Key, tostring(cfg.AccessKey))
@@ -242,19 +271,16 @@ function Hwan:CreateWindow(opts)
         TextYAlignment = Enum.TextYAlignment.Center,
         TextXAlignment = Enum.TextXAlignment.Center,
         TextStrokeTransparency = 0,
-        TextStrokeColor3 = Color3.fromRGB(0,0,0),
+        TextStrokeColor3 = cfg.Theme.NameStroke,
         TextTransparency = 0,
-        TextColor3 = cfg.Theme.Accent,
+        TextColor3 = cfg.Theme.NameText,
         ZIndex = 70,
-        ClipsDescendants = false
+        ClipsDescendants = false,
+        TextScaled = false,
     })
     refs.TitleMain = TitleMain
     local titleGrad = new("UIGradient", {Parent = TitleMain})
-    titleGrad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(255,255,255)),
-        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(120,120,120)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(0,0,0)),
-    })
+    titleGrad.Color = ColorSequence.new(cfg.Theme.NameGradientColors)
     titleGrad.Rotation = 0
 
     local TabsFrame = new("Frame", {Parent = TitleFrame, Size = UDim2.new(1,0,0,36), Position = UDim2.new(0,0,0,56), BackgroundTransparency = 1})
@@ -262,31 +288,30 @@ function Hwan:CreateWindow(opts)
     new("UICorner", {Parent = TabsHolder, CornerRadius = UDim.new(0,8)})
 
     local dividerY = 100
-    local divider0 = new("Frame", {
+    local MainDivider = new("Frame", {
         Parent = Frame,
-        Name = "Divider0",
+        Name = "MainDivider",
         Size = UDim2.new(1, -16, 0, 2),
         Position = UDim2.new(0, 8, 0, dividerY + 8),
         BackgroundColor3 = cfg.Theme.TabBg,
         BorderSizePixel = 0
     })
-    refs.Divider0 = divider0
-    divider0.ClipsDescendants = true
+    refs.MainDivider = MainDivider
+    MainDivider.ClipsDescendants = true
 
-    local dividerGrad = new("UIGradient", { Parent = divider0 })
+    local dividerGrad = new("UIGradient", { Parent = MainDivider })
     dividerGrad.Color = ColorSequence.new({
         ColorSequenceKeypoint.new(0.00, Color3.fromRGB(255,255,255)),
-        ColorSequenceKeypoint.new(0.35, Color3.fromRGB(200,200,200)),
-        ColorSequenceKeypoint.new(0.50, Color3.fromRGB(30,30,30)),
-        ColorSequenceKeypoint.new(0.65, Color3.fromRGB(200,200,200)),
+        ColorSequenceKeypoint.new(0.50, Color3.fromRGB(180,180,180)),
         ColorSequenceKeypoint.new(1.00, Color3.fromRGB(255,255,255)),
     })
     dividerGrad.Rotation = 0
 
-    local gradSpeed = 80
+    local gradSpeed = 30
     local gradConn = RunService.RenderStepped:Connect(function(dt)
         pcall(function()
             dividerGrad.Rotation = (dividerGrad.Rotation + dt * gradSpeed) % 360
+            titleGrad.Rotation = (titleGrad.Rotation + dt * cfg.Theme.NameGradientSpeed) % 360
         end)
     end)
     addConn(gradConn)
@@ -302,7 +327,7 @@ function Hwan:CreateWindow(opts)
 
     local InfoInner = new("Frame", {Parent = InfoBar, Size = UDim2.new(1, -8, 1, -8), Position = UDim2.new(0,4,0,4), BackgroundColor3 = cfg.Theme.InfoInner, BorderSizePixel = 0, ZIndex = 51})
     new("UICorner", {Parent = InfoInner, CornerRadius = UDim.new(0,6)})
-    local InfoText = new("TextLabel", {Parent = InfoInner, Size = UDim2.new(1,-4,1,0), Position = UDim2.new(0,2,0,0), BackgroundTransparency = 1, Font = Enum.Font.SourceSansBold, TextSize = 18, TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center, TextColor3 = cfg.Theme.Text, Text = "TIME: 00:00:00 | FPS: 0 | PING: 0 ms (0%CV)", ZIndex = 52})
+    local InfoText = new("TextLabel", {Parent = InfoInner, Size = UDim2.new(1,-4,1,0), Position = UDim2.new(0,2,0,0), BackgroundTransparency = 1, Font = Enum.Font.SourceSansBold, TextSize = 18, TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center, TextColor3 = cfg.Theme.Text, Text = "TIME: 00:00:00 | FPS: 0 | PING: 0 ms (0%CV)", ZIndex = 52, TextScaled = false})
     refs.InfoText = InfoText
 
     local HwanBtn = new("Frame", {Parent = screenGui, Name = "HwanBtn", Size = UDim2.new(0,56,0,56), Position = UDim2.new(0, 90, 0, 64), BackgroundColor3 = cfg.Theme.InfoInner, BorderSizePixel = 0, ZIndex = 1000, Active = true, Visible = (cfg.ShowToggleIcon ~= false)})
@@ -317,8 +342,8 @@ function Hwan:CreateWindow(opts)
     new("UICorner", {Parent = HwanInner, CornerRadius = UDim.new(0,8)})
     refs.HwanInner = HwanInner
 
-    local HwanTop = new("TextLabel", {Parent = HwanInner, Size = UDim2.new(1,0,0,18), Position = UDim2.new(0,0,0,6), BackgroundTransparency = 1, Font = Enum.Font.LuckiestGuy, Text = string.sub(cfg.Title,1,4):upper(), TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center, TextStrokeTransparency = 0, TextStrokeColor3 = Color3.fromRGB(255,255,255), TextColor3 = Color3.fromRGB(0,0,0), ZIndex = 1002, TextSize = 14})
-    local HwanBottom = new("TextLabel", {Parent = HwanInner, Size = UDim2.new(1,0,0,20), Position = UDim2.new(0,0,0,26), BackgroundTransparency = 1, Font = Enum.Font.LuckiestGuy, Text = "HUB", TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center, TextStrokeTransparency = 0, TextStrokeColor3 = Color3.fromRGB(255,255,255), TextColor3 = Color3.fromRGB(0,0,0), ZIndex = 1002, TextSize = 16})
+    local HwanTop = new("TextLabel", {Parent = HwanInner, Size = UDim2.new(1,0,0,18), Position = UDim2.new(0,0,0,6), BackgroundTransparency = 1, Font = Enum.Font.LuckiestGuy, Text = string.sub(cfg.Title,1,4):upper(), TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center, TextStrokeTransparency = 0, TextStrokeColor3 = cfg.Theme.NameStroke, TextColor3 = cfg.Theme.NameText, ZIndex = 1002, TextSize = 14, TextScaled = false})
+    local HwanBottom = new("TextLabel", {Parent = HwanInner, Size = UDim2.new(1,0,0,20), Position = UDim2.new(0,0,0,26), BackgroundTransparency = 1, Font = Enum.Font.LuckiestGuy, Text = "HUB", TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center, TextStrokeTransparency = 0, TextStrokeColor3 = cfg.Theme.NameStroke, TextColor3 = cfg.Theme.NameText, ZIndex = 1002, TextSize = 16, TextScaled = false})
     local hwanTopGrad = new("UIGradient", {Parent = HwanTop}) hwanTopGrad.Rotation = 0
     local hwanBottomGrad = new("UIGradient", {Parent = HwanBottom}) hwanBottomGrad.Rotation = 0
     hwanTopGrad.Color = titleGrad.Color
@@ -497,7 +522,7 @@ function Hwan:CreateWindow(opts)
         end
 
         local function waitForLayoutStability()
-            local maxFrames = 45
+            local maxFrames = 60
             local stableNeeded = 2
             local stable = 0
             local prev = -1
@@ -528,18 +553,19 @@ function Hwan:CreateWindow(opts)
 
         local tab = {Name = name, Button = btn, Content = content, Index = idx, _showed = function() return content.Visible end, _waiter = waitForLayoutStability, _reveal = revealPendingText}
 
-        addConn(btn.MouseEnter:Connect(function() if UserInputService.MouseEnabled then tween(btn, {BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.06)}, 0.12) end end))
+        addConn(btn.MouseEnter:Connect(function() if UserInputService.MouseEnabled then tween(btn, {BackgroundColor3 = brightenColor(cfg.Theme.TabBg, cfg.Theme.ElemHoverBrightness)}, 0.12) end end))
         addConn(btn.MouseLeave:Connect(function() if btn ~= nil then
             if btn.TextColor3 ~= Color3.fromRGB(255,255,255) then
                 tween(btn, {BackgroundColor3 = cfg.Theme.TabBg}, 0.12)
             else
-                tween(btn, {BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.08)}, 0.12)
+                tween(btn, {BackgroundColor3 = brightenColor(cfg.Theme.TabBg, cfg.Theme.ElemHoverBrightness)}, 0.12)
             end
         end end))
 
         function tab:CreateButton(opts)
             opts = opts or {}
             local name = opts.Name or "Button"
+            local btnText = opts.ButtonText or "Button"
             local cb = opts.Callback
             local row = new("Frame", {Parent = content, Size = UDim2.new(1,0,0,36), BackgroundTransparency = 1})
             local lbl = new("TextLabel", {
@@ -551,7 +577,8 @@ function Hwan:CreateWindow(opts)
                 TextColor3 = cfg.Theme.Text,
                 Font = Enum.Font.SourceSansBold,
                 TextSize = 17,
-                TextXAlignment = Enum.TextXAlignment.Left
+                TextXAlignment = Enum.TextXAlignment.Left,
+                TextScaled = false,
             })
             local b = new("TextButton", {
                 Parent = row,
@@ -559,7 +586,7 @@ function Hwan:CreateWindow(opts)
                 Position = UDim2.new(0.66, 4, 0, 0),
                 BackgroundColor3 = cfg.Theme.Btn,
                 TextColor3 = cfg.Theme.Text,
-                Text = name,
+                Text = btnText,
                 Font = Enum.Font.SourceSansBold,
                 TextSize = 17,
                 AutoButtonColor = false,
@@ -568,6 +595,8 @@ function Hwan:CreateWindow(opts)
                 TextScaled = false
             })
             new("UICorner", {Parent = b, CornerRadius = UDim.new(0,8)})
+            addConn(b.MouseEnter:Connect(function() if UserInputService.MouseEnabled then tween(b, {BackgroundColor3 = brightenColor(cfg.Theme.Btn, cfg.Theme.ElemHoverBrightness)}, 0.10) end end))
+            addConn(b.MouseLeave:Connect(function() tween(b, {BackgroundColor3 = cfg.Theme.Btn}, 0.10) end))
             addConn(b.MouseButton1Click:Connect(function()
                 if cb then pcall(cb) end
                 tween(b, {BackgroundColor3 = brightenColor(cfg.Theme.Btn, 0.12)}, 0.06)
@@ -587,7 +616,7 @@ function Hwan:CreateWindow(opts)
             local cb = opts.Callback
 
             local frame = new("Frame", {Parent = content, Size = UDim2.new(1,0,0,30), BackgroundTransparency = 1})
-            new("TextLabel", {Parent = frame, Text = name, Size = UDim2.new(0.65, -8, 1, 0), Position = UDim2.new(0,8,0,0), BackgroundTransparency = 1, TextColor3 = cfg.Theme.Text, Font = Enum.Font.SourceSansBold, TextSize = 17, TextXAlignment = Enum.TextXAlignment.Left})
+            new("TextLabel", {Parent = frame, Text = name, Size = UDim2.new(0.65, -8, 1, 0), Position = UDim2.new(0,8,0,0), BackgroundTransparency = 1, TextColor3 = cfg.Theme.Text, Font = Enum.Font.SourceSansBold, TextSize = 17, TextXAlignment = Enum.TextXAlignment.Left, TextScaled = false})
             local toggleWidth = 54
             local toggleHeight = 24
             local pad = 6
@@ -628,7 +657,7 @@ function Hwan:CreateWindow(opts)
         end
 
         function tab:CreateLabel(text)
-            local l = new("TextLabel", {Parent = content, Size = UDim2.new(1,0,0,20), Text = text or "", BackgroundTransparency = 1, TextColor3 = cfg.Theme.Text, Font = Enum.Font.SourceSansBold, TextSize = 17, TextXAlignment = Enum.TextXAlignment.Left})
+            local l = new("TextLabel", {Parent = content, Size = UDim2.new(1,0,0,20), Text = text or "", BackgroundTransparency = 1, TextColor3 = cfg.Theme.Text, Font = Enum.Font.SourceSansBold, TextSize = 17, TextXAlignment = Enum.TextXAlignment.Left, TextScaled = false})
             pcall(hideTextNodesIn, l)
             task.defer(function() pcall(updateContentCanvas) end)
             return l
@@ -638,10 +667,47 @@ function Hwan:CreateWindow(opts)
             local sec = new("Frame", {Parent = content, Size = UDim2.new(1,0,0,40), BackgroundTransparency = 1})
             local bg = new("Frame", {Parent = sec, Size = UDim2.new(1,0,0,32), Position = UDim2.new(0,0,0,4), BackgroundColor3 = cfg.Theme.TabBg, BorderSizePixel = 0})
             new("UICorner", {Parent = bg, CornerRadius = UDim.new(0,8)})
-            new("TextLabel", {Parent = bg, Text = title, Size = UDim2.new(1,-12,1,0), Position = UDim2.new(0,8,0,0), BackgroundTransparency = 1, Font = Enum.Font.SourceSansBold, TextSize = 17, TextColor3 = cfg.Theme.Text, TextXAlignment = Enum.TextXAlignment.Left})
+            new("TextLabel", {Parent = bg, Text = title, Size = UDim2.new(1,-12,1,0), Position = UDim2.new(0,8,0,0), BackgroundTransparency = 1, Font = Enum.Font.SourceSansBold, TextSize = 17, TextColor3 = cfg.Theme.Text, TextXAlignment = Enum.TextXAlignment.Left, TextScaled = false})
             pcall(hideTextNodesIn, sec)
             task.defer(function() pcall(updateContentCanvas) end)
             return sec
+        end
+
+        -- helper for slider rich text
+        local function countCharsFit(fullText, font, textSize, targetPixel)
+            local lo, hi = 0, #fullText
+            while lo < hi do
+                local mid = math.ceil((lo + hi + 1) / 2)
+                local ok, size = pcall(function()
+                    return TextService:GetTextSize(string.sub(fullText, 1, mid), textSize, font, Vector2.new(10000, 10000)).X
+                end)
+                local w = 0
+                if ok and size then w = size end
+                if w <= targetPixel then
+                    lo = mid
+                else
+                    hi = mid - 1
+                end
+            end
+            return lo
+        end
+
+        local function makeRichText(fullText, splitIndex)
+            fullText = fullText or ""
+            local escFull = escapeHtml(fullText)
+            local colorCovered = color3ToHex(cfg.Theme.Main or Color3.new(0,0,0))
+            local colorUncovered = color3ToHex(cfg.Theme.Text or Color3.new(1,1,1))
+            if splitIndex <= 0 then
+                return string.format("<font color=\"%s\">%s</font>", colorUncovered, escFull)
+            elseif splitIndex >= #fullText then
+                return string.format("<font color=\"%s\">%s</font>", colorCovered, escFull)
+            else
+                local left = string.sub(fullText, 1, splitIndex)
+                local right = string.sub(fullText, splitIndex + 1)
+                left = escapeHtml(left)
+                right = escapeHtml(right)
+                return string.format("<font color=\"%s\">%s</font><font color=\"%s\">%s</font>", colorCovered, left, colorUncovered, right)
+            end
         end
 
         function tab:CreateDropdown(opts)
@@ -653,7 +719,7 @@ function Hwan:CreateWindow(opts)
             local flag = opts.Flag
 
             local frame = new("Frame", {Parent = content, Size = UDim2.new(1,0,0,36), BackgroundTransparency = 1})
-            new("TextLabel", {Parent = frame, Text = name, Size = UDim2.new(0.65, -8, 1, 0), Position = UDim2.new(0,8,0,0), BackgroundTransparency = 1, TextColor3 = cfg.Theme.Text, Font = Enum.Font.SourceSansBold, TextSize = 17, TextXAlignment = Enum.TextXAlignment.Left})
+            new("TextLabel", {Parent = frame, Text = name, Size = UDim2.new(0.65, -8, 1, 0), Position = UDim2.new(0,8,0,0), BackgroundTransparency = 1, TextColor3 = cfg.Theme.Text, Font = Enum.Font.SourceSansBold, TextSize = 17, TextXAlignment = Enum.TextXAlignment.Left, TextScaled = false})
             local btnWidthScale = 0.36
             local btn = new("TextButton", {Parent = frame, Size = UDim2.new(btnWidthScale, -8, 1, 0), Position = UDim2.new(1 - btnWidthScale, 4, 0, 0), BackgroundColor3 = cfg.Theme.Btn, Text = "Select", Font = Enum.Font.SourceSansBold, TextSize = 17, TextColor3 = cfg.Theme.Text, AutoButtonColor = false, TextScaled = false, TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center})
             new("UICorner", {Parent = btn, CornerRadius = UDim.new(0,8)})
@@ -729,6 +795,7 @@ function Hwan:CreateWindow(opts)
                 panelStroke.Color = Color3.fromRGB(255,255,255)
 
                 local header = new("TextLabel", {Parent = panel, Size = UDim2.new(1,-12,0,headerH-4), Position = UDim2.new(0,6,0,6), BackgroundTransparency = 1, Font = Enum.Font.SourceSansBold, TextSize = 17, Text = name or "", TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Center, TextColor3 = cfg.Theme.Text, ZIndex = 221})
+                header.TextScaled = false
 
                 contentFrame = new("ScrollingFrame", {Parent = panel, Size = UDim2.new(1,-12,0,panelH - headerH - 10), Position = UDim2.new(0,6,0, headerH), BackgroundTransparency = 1, ScrollBarThickness = 0, CanvasSize = UDim2.new(0,0,0, #options * itemH), VerticalScrollBarInset = Enum.ScrollBarInset.Always})
                 contentFrame.AutomaticCanvasSize = Enum.AutomaticSize.None
@@ -738,14 +805,15 @@ function Hwan:CreateWindow(opts)
                     local row = new("TextButton", {Parent = contentFrame, Size = UDim2.new(1,0,0,itemH-6), Position = UDim2.new(0,0,0, (i-1)*itemH), BackgroundColor3 = cfg.Theme.TabBg, Text = tostring(opt), Font = Enum.Font.SourceSansBold, TextSize = 17, TextColor3 = darkenColor(cfg.Theme.Text,0.18), AutoButtonColor = false, ZIndex = 222})
                     new("UICorner", {Parent = row, CornerRadius = UDim.new(0,6)})
                     row.TextStrokeTransparency = 1
+                    row.TextScaled = false
 
                     row.MouseEnter:Connect(function()
                         if selectedIndex == i then return end
-                        tween(row, {BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.06)}, 0.10)
+                        tween(row, {BackgroundColor3 = brightenColor(cfg.Theme.TabBg, cfg.Theme.ElemHoverBrightness)}, 0.10)
                     end)
                     row.MouseLeave:Connect(function()
                         if selectedIndex == i then
-                            tween(row, {BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.12)}, 0.10)
+                            tween(row, {BackgroundColor3 = brightenColor(cfg.Theme.TabBg, cfg.Theme.ElemHoverBrightness * 2)}, 0.10)
                         else
                             tween(row, {BackgroundColor3 = cfg.Theme.TabBg}, 0.10)
                         end
@@ -772,7 +840,7 @@ function Hwan:CreateWindow(opts)
                         end
 
                         selectedIndex = i
-                        row.BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.14)
+                        row.BackgroundColor3 = brightenColor(cfg.Theme.TabBg, cfg.Theme.ElemHoverBrightness * 2)
                         row.TextColor3 = Color3.fromRGB(255,255,255)
                         btn.Text = tostring(opt)
                         if window and window._savedState then
@@ -839,7 +907,7 @@ function Hwan:CreateWindow(opts)
             local flag = opts.Flag
 
             local row = new("Frame", {Parent = content, Size = UDim2.new(1,0,0,36), BackgroundTransparency = 1})
-            new("TextLabel", {Parent = row, Text = label, Size = UDim2.new(0.65, -8, 1, 0), Position = UDim2.new(0,8,0,0), BackgroundTransparency = 1, TextColor3 = cfg.Theme.Text, Font = Enum.Font.SourceSansBold, TextSize = 17, TextXAlignment = Enum.TextXAlignment.Left})
+            new("TextLabel", {Parent = row, Text = label, Size = UDim2.new(0.65, -8, 1, 0), Position = UDim2.new(0,8,0,0), BackgroundTransparency = 1, TextColor3 = cfg.Theme.Text, Font = Enum.Font.SourceSansBold, TextSize = 17, TextXAlignment = Enum.TextXAlignment.Left, TextScaled = false})
             local btn = new("TextButton", {Parent = row, Size = UDim2.new(0.34, -8, 1, 0), Position = UDim2.new(0.66, 4, 0, 0), BackgroundColor3 = cfg.Theme.Btn, TextColor3 = cfg.Theme.Text, Text = "", Font = Enum.Font.SourceSansBold, TextSize = 17, AutoButtonColor=false, TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center})
             new("UICorner", {Parent = btn, CornerRadius = UDim.new(0,8)})
 
@@ -967,21 +1035,46 @@ function Hwan:CreateWindow(opts)
                 TextYAlignment = Enum.TextYAlignment.Center,
                 ZIndex = 3,
                 RichText = true,
+                TextScaled = false,
             })
             leftLabel.Text = label
 
             local rightBoxScale = 0.30
             local rightBox = new("Frame", {Parent = row, Size = UDim2.new(rightBoxScale, -8, 0, trackHeight), Position = UDim2.new(1 - rightBoxScale, 4, 0.5, -trackHeight/2), BackgroundColor3 = cfg.Theme.TabBg, BorderSizePixel = 0})
             new("UICorner", {Parent = rightBox, CornerRadius = UDim.new(0,8)})
-            local valueLabel = new("TextLabel", {Parent = rightBox, Size = UDim2.new(1, -12, 1, 0), Position = UDim2.new(0,6,0,0), BackgroundTransparency = 1, Font = leftLabel.Font, TextSize = leftLabel.TextSize, TextColor3 = cfg.Theme.Text, TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center})
+            local valueLabel = new("TextLabel", {Parent = rightBox, Size = UDim2.new(1, -12, 1, 0), Position = UDim2.new(0,6,0,0), BackgroundTransparency = 1, Font = leftLabel.Font, TextSize = leftLabel.TextSize, TextColor3 = cfg.Theme.Text, TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center, TextScaled = false})
             valueLabel.Text = tostring(default)
 
             local function setFromPercent(p, skipTween)
                 p = clampVal(p, 0, 1)
                 local value = minVal + (maxVal - minVal) * p
                 local displayValue = (math.floor(value*100 + 0.5)/100)
-                if not skipTween then tween(fill, {Size = UDim2.new(p,0,1,0)}, 0.12) else fill.Size = UDim2.new(p,0,1,0) end
+
+                local textStr = tostring(label or "")
+
+                local trackW = math.max(1, track.AbsoluteSize.X)
+                local usableWidth = trackW - (textPadding * 2)
+                local fillPixel = math.floor(usableWidth * p + 0.5)
+
+                local coveredChars = 0
+                if #textStr > 0 and fillPixel > 0 then
+                    coveredChars = countCharsFit(textStr, leftLabel.Font, leftLabel.TextSize, fillPixel)
+                else
+                    coveredChars = 0
+                end
+
+                local rich = makeRichText(textStr, coveredChars)
+                pcall(function() leftLabel.Text = rich end)
+
+                local targetFill = UDim2.new(p, 0, 1, 0)
+                if not skipTween then
+                    tween(fill, {Size = targetFill}, 0.12, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
+                else
+                    fill.Size = targetFill
+                end
+
                 pcall(function() valueLabel.Text = tostring(displayValue) end)
+
                 if cb then pcall(cb, value) end
                 if flag and window.Flags[flag] and window.Flags[flag].Set then pcall(window.Flags[flag].Set, value) end
             end
@@ -989,7 +1082,10 @@ function Hwan:CreateWindow(opts)
             local defaultPct = 0
             local range = maxVal - minVal
             if range == 0 then defaultPct = 0 else defaultPct = (default - minVal) / range end
-            task.defer(function() RunService.Heartbeat:Wait(); setFromPercent(defaultPct, true) end)
+            task.defer(function()
+                RunService.Heartbeat:Wait()
+                setFromPercent(defaultPct, true)
+            end)
 
             local dragging = false
             local inputChangedConn
@@ -1077,9 +1173,8 @@ function Hwan:CreateWindow(opts)
             pcall(function() tab:_waiter() end)
             tween(tab.Content, {Position = UDim2.new(0,0,0,0)}, 0.36, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 
-            tween(tab.Button, {BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.14)}, 0.14)
+            tween(tab.Button, {BackgroundColor3 = brightenColor(cfg.Theme.TabBg, cfg.Theme.ElemHoverBrightness)}, 0.14)
             tab.Button.TextColor3 = Color3.fromRGB(255,255,255)
-            ensureTabVisible = ensureTabVisible or function() end
             pcall(function() if window then window._activeTabIndex = idx; window._savedState.active = idx end end)
         end))
 
@@ -1087,7 +1182,7 @@ function Hwan:CreateWindow(opts)
             tab.Content.Visible = true
             task.spawn(function() pcall(tab._waiter) end)
             tab.Content.Position = UDim2.new(0,0,0,0)
-            tween(tab.Button, {BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.14)}, 0.12)
+            tween(tab.Button, {BackgroundColor3 = brightenColor(cfg.Theme.TabBg, cfg.Theme.ElemHoverBrightness)}, 0.12)
             tab.Button.TextColor3 = Color3.fromRGB(255,255,255)
             pcall(function() if window then window._activeTabIndex = 1; window._savedState.active = 1 end end)
         end
@@ -1145,73 +1240,84 @@ function Hwan:CreateWindow(opts)
     local pingTimer = 0
     local pingInterval = 0.25
     addConn(RunService.RenderStepped:Connect(function(dt)
-        if titleGrad then titleGrad.Rotation = (titleGrad.Rotation + 0.9) % 360 end
-        if hwanTopGrad then hwanTopGrad.Rotation = (hwanTopGrad.Rotation + 1.6) % 360 end
-        if hwanBottomGrad then hwanBottomGrad.Rotation = (hwanBottomGrad.Rotation + 1.6) % 360 end
+        pcall(function()
+            if hwanTopGrad then hwanTopGrad.Rotation = (hwanTopGrad.Rotation + dt * cfg.Theme.NameGradientSpeed) % 360 end
+            if hwanBottomGrad then hwanBottomGrad.Rotation = (hwanBottomGrad.Rotation + dt * cfg.Theme.NameGradientSpeed) % 360 end
 
-        local timeStr = os.date("%H:%M:%S")
-        local fps = 0
-        if dt > 0 then fps = math.floor(1/dt + 0.5) end
+            local timeStr = os.date("%H:%M:%S")
+            local fps = 0
+            if dt > 0 then fps = math.floor(1/dt + 0.5) end
 
-        pingTimer = pingTimer + dt
-        local pingMs = 0
-        if pingTimer >= pingInterval then
-            pingTimer = pingTimer - pingInterval
-            local ok, pingValue = pcall(function() return game:GetService("Stats").Network.ServerStatsItem["Data Ping"] end)
-            if ok and pingValue and typeof(pingValue.GetValueString) == "function" then
-                local ok2, str = pcall(function() return pingValue:GetValueString() end)
-                if ok2 and str then pingMs = tonumber(str:match("%d+")) or 0 end
+            pingTimer = pingTimer + dt
+            local pingMs = 0
+            if pingTimer >= pingInterval then
+                pingTimer = pingTimer - pingInterval
+                local ok, pingValue = pcall(function() return game:GetService("Stats").Network.ServerStatsItem["Data Ping"] end)
+                if ok and pingValue and typeof(pingValue.GetValueString) == "function" then
+                    local ok2, str = pcall(function() return pingValue:GetValueString() end)
+                    if ok2 and str then pingMs = tonumber(str:match("%d+")) or 0 end
+                end
+                table.insert(pingSamples, pingMs)
+                if #pingSamples > maxPingSamples then table.remove(pingSamples, 1) end
+            else
+                if #pingSamples > 0 then pingMs = pingSamples[#pingSamples] end
             end
-            table.insert(pingSamples, pingMs)
-            if #pingSamples > maxPingSamples then table.remove(pingSamples, 1) end
-        else
-            if #pingSamples > 0 then pingMs = pingSamples[#pingSamples] end
-        end
 
-        local mean, std = 0, 0
-        if #pingSamples > 0 then
-            local sum = 0
-            for _, v in ipairs(pingSamples) do sum = sum + v end
-            mean = sum / #pingSamples
-            local sqsum = 0
-            for _, v in ipairs(pingSamples) do sqsum = sqsum + (v - mean) * (v - mean) end
-            std = math.sqrt(sqsum / #pingSamples)
-        end
-        local cvPercent = 0
-        if mean > 0 then cvPercent = math.floor((std / mean) * 100 + 0.5) end
+            local mean, std = 0, 0
+            if #pingSamples > 0 then
+                local sum = 0
+                for _, v in ipairs(pingSamples) do sum = sum + v end
+                mean = sum / #pingSamples
+                local sqsum = 0
+                for _, v in ipairs(pingSamples) do sqsum = sqsum + (v - mean) * (v - mean) end
+                std = math.sqrt(sqsum / #pingSamples)
+            end
+            local cvPercent = 0
+            if mean > 0 then cvPercent = math.floor((std / mean) * 100 + 0.5) end
 
-        if refs.InfoText then
-            refs.InfoText.Text = string.format("TIME : %s   |   FPS: %d   |   PING: %d ms (%d%%CV)", timeStr, fps, pingMs, cvPercent)
-        end
+            if refs.InfoText then
+                refs.InfoText.Text = string.format("TIME : %s   |   FPS: %d   |   PING: %d ms (%d%%CV)", timeStr, fps, pingMs, cvPercent)
+            end
+        end)
     end))
 
+    -- Notifications: stacking system
     local notifQueue = {}
-    local notifShowing = false
+    local activeNotifs = {}
+    local maxActive = cfg.Theme.NotificationMaxActive or 5
+    local notifGap = cfg.Theme.NotificationGap or 8
     local defaultNotifDuration = 1.5
 
-    local function processNextNotification()
-        if notifShowing then return end
-        local item = table.remove(notifQueue, 1)
-        if not item then return end
-        notifShowing = true
-        local text = tostring(item.text or "")
-        local duration = (item.duration and tonumber(item.duration)) or defaultNotifDuration
+    local function repositionActiveNotifs()
+        local screenSize = Workspace.CurrentCamera and Workspace.CurrentCamera.ViewportSize or Vector2.new(1920,1080)
+        for i, obj in ipairs(activeNotifs) do
+            if obj.frame and obj.frame.Parent then
+                local width = obj.width or 320
+                local h = obj.height or obj.frame.AbsoluteSize.Y
+                local baseX = screenSize.X - (16 + width)
+                local yOff = 96 + (i-1) * (h + notifGap)
+                tween(obj.frame, {Position = UDim2.new(0, baseX, 0, screenSize.Y - yOff - h)}, 0.18, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
+            end
+        end
+    end
 
-        local innerPad = 10
-        local minW, maxW = 160, 420
-        local maxH = 320
-        local headerFont = TitleMain.Font
-        local headerSize = 16
+    local function createNotificationFrame(text, duration)
+        local innerPad = 12
+        local minW, maxW = 160, 520
+        local maxH = 600
+        local headerSize = cfg.Theme.NotificationHeaderSize or 18
+        local bodySize = cfg.Theme.NotificationBodySize or 18
         local bodyFont = Enum.Font.SourceSans
-        local bodySize = 15
 
+        local screenSize = Workspace.CurrentCamera and Workspace.CurrentCamera.ViewportSize or Vector2.new(1920,1080)
         local textSize = TextService:GetTextSize(text, bodySize, bodyFont, Vector2.new(maxW - innerPad*2, maxH))
         local desiredW = math.clamp(math.ceil(textSize.X + innerPad*2), minW, maxW)
         local bodyH = math.ceil(textSize.Y)
-        local headerW = TextService:GetTextSize(cfg.Title or "", headerSize, headerFont, Vector2.new(desiredW - innerPad*2, 100)).X
+        local headerW = TextService:GetTextSize(cfg.Title or "", headerSize, TitleMain.Font, Vector2.new(desiredW - innerPad*2, 100)).X
         local notifWidth = math.max(desiredW, math.ceil(headerW + innerPad*2))
+        local notifHeight = math.max(48, bodyH + headerSize + innerPad*2)
 
-        local notif = new("Frame", {Parent = screenGui, Size = UDim2.new(0, notifWidth, 0, math.max(48, bodyH + headerSize + innerPad*2)), Position = UDim2.new(1, - (16 + notifWidth), 1, -96), BackgroundColor3 = cfg.Theme.InfoInner, BorderSizePixel = 0, ZIndex = 220})
+        local notif = new("Frame", {Parent = screenGui, Size = UDim2.new(0, notifWidth, 0, notifHeight), Position = UDim2.new(1, - (16 + notifWidth), 1, -96), BackgroundColor3 = cfg.Theme.InfoInner, BorderSizePixel = 0, ZIndex = 220})
         new("UICorner", {Parent = notif, CornerRadius = UDim.new(0,8)})
         local notifStroke = new("UIStroke", {Parent = notif})
         notifStroke.Thickness = 2
@@ -1221,11 +1327,16 @@ function Hwan:CreateWindow(opts)
         local inner = new("Frame", {Parent = notif, Size = UDim2.new(1, -innerPad*2, 1, -innerPad*2), Position = UDim2.new(0, innerPad, 0, innerPad), BackgroundTransparency = 1, ZIndex = 221})
         new("UICorner", {Parent = inner, CornerRadius = UDim.new(0,6)})
 
-        local header = new("TextLabel", {Parent = inner, Size = UDim2.new(1,0,0,headerSize), Position = UDim2.new(0,0,0,0), BackgroundTransparency = 1, Font = headerFont, TextSize = headerSize, Text = cfg.Title, TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = cfg.Theme.Text, ZIndex = 222})
+        local header = new("TextLabel", {Parent = inner, Size = UDim2.new(1,0,0,headerSize), Position = UDim2.new(0,0,0,0), BackgroundTransparency = 1, Font = TitleMain.Font, TextSize = headerSize, Text = cfg.Title, TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = cfg.Theme.NameText, TextStrokeColor3 = cfg.Theme.NameStroke, ZIndex = 222})
         header.TextTransparency = 0
+        header.TextScaled = false
+        local headerGrad = new("UIGradient", {Parent = header})
+        headerGrad.Color = titleGrad.Color
+        headerGrad.Rotation = titleGrad.Rotation
 
         local body = new("TextLabel", {Parent = inner, Size = UDim2.new(1,0,0,bodyH), Position = UDim2.new(0,0,0,headerSize), BackgroundTransparency = 1, Font = bodyFont, TextSize = bodySize, Text = text, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, TextColor3 = cfg.Theme.Text, ZIndex = 222, TextWrapped = true})
         body.AutomaticSize = Enum.AutomaticSize.None
+        body.TextScaled = false
 
         notif.BackgroundTransparency = 1
         header.TextTransparency = 1
@@ -1234,23 +1345,46 @@ function Hwan:CreateWindow(opts)
         tween(header, {TextTransparency = 0}, 0.14, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
         tween(body, {TextTransparency = 0}, 0.14, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
 
-        task.delay(duration, function()
-            tween(notif, {BackgroundTransparency = 1}, 0.12)
-            tween(header, {TextTransparency = 1}, 0.12)
-            tween(body, {TextTransparency = 1}, 0.12)
-            task.wait(0.12)
-            safeDestroy(notif)
-            notifShowing = false
-            processNextNotification()
-        end)
+        return { frame = notif, width = notifWidth, height = notifHeight, header = header, body = body, headerGrad = headerGrad }
+    end
+
+    local function pushNotification(text, duration)
+        duration = (duration and tonumber(duration)) or defaultNotifDuration
+        if #activeNotifs < maxActive then
+            local obj = createNotificationFrame(text, duration)
+            table.insert(activeNotifs, obj)
+            repositionActiveNotifs()
+            -- schedule removal
+            task.delay(duration, function()
+                pcall(function()
+                    for i, v in ipairs(activeNotifs) do
+                        if v == obj then
+                            tween(v.frame, {BackgroundTransparency = 1}, 0.12)
+                            tween(v.header, {TextTransparency = 1}, 0.12)
+                            tween(v.body, {TextTransparency = 1}, 0.12)
+                            task.wait(0.12)
+                            safeDestroy(v.frame)
+                            table.remove(activeNotifs, i)
+                            repositionActiveNotifs()
+                            -- if queue has items, push next
+                            if #notifQueue > 0 then
+                                local next = table.remove(notifQueue, 1)
+                                pushNotification(next.text, next.duration)
+                            end
+                            break
+                        end
+                    end
+                end)
+            end)
+        else
+            -- queue
+            table.insert(notifQueue, { text = text, duration = duration })
+        end
     end
 
     local function showNotification(text, duration)
-        table.insert(notifQueue, {text = tostring(text or ""), duration = duration})
-        processNextNotification()
+        pushNotification(tostring(text or ""), duration)
     end
-
-    local finalSize = UDim2.new(0, cfg.Width, 0, cfg.Height)
 
     -- Config saving/loading
     local function configFileName()
@@ -1315,7 +1449,7 @@ function Hwan:CreateWindow(opts)
         end
     end
 
-    -- Key UI (enhanced, supports multiple keys, remote fetch, save)
+    -- Key UI (enhanced)
     local function createKeyUI(onAuth)
         local ks = cfg.KeySettings or {}
         ks.Title = ks.Title or (cfg.Title .. " | Key System")
@@ -1362,7 +1496,7 @@ function Hwan:CreateWindow(opts)
             if raw then
                 savedKey = tostring(raw):gsub("^%s*(.-)%s*$","%1")
                 if savedKey ~= "" and allowed[savedKey] then
-                    showNotification("Valid saved key found. Access granted.")
+                    showNotification("Valid saved key. Access granted.")
                     onAuth()
                     return
                 end
@@ -1376,7 +1510,7 @@ function Hwan:CreateWindow(opts)
         kStroke.Transparency = 0.8
         kStroke.Color = Color3.fromRGB(255,255,255)
 
-        local titleLbl = new("TextLabel", {Parent = kFrame, Size = UDim2.new(1, -20, 0, 30), Position = UDim2.new(0,10,0,8), BackgroundTransparency = 1, Font = Enum.Font.FredokaOne, TextSize = 18, Text = ks.Title, TextColor3 = cfg.Theme.Accent, TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 305})
+        local titleLbl = new("TextLabel", {Parent = kFrame, Size = UDim2.new(1, -20, 0, 30), Position = UDim2.new(0,10,0,8), BackgroundTransparency = 1, Font = Enum.Font.FredokaOne, TextSize = 18, Text = ks.Title, TextColor3 = cfg.Theme.NameText, TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 305})
         local inputBox = new("TextBox", {Parent = kFrame, Size = UDim2.new(1, -40, 0, 40), Position = UDim2.new(0,20,0,48), PlaceholderText = "Enter your key here!", Font = Enum.Font.SourceSans, TextSize = 18, Text = "", ClearTextOnFocus = false, BackgroundColor3 = Color3.fromRGB(60,60,60), TextColor3 = cfg.Theme.Text, BorderSizePixel = 0, ZIndex = 305})
         new("UICorner", {Parent = inputBox, CornerRadius = UDim.new(0,6)})
         new("UIPadding", {Parent = inputBox, PaddingLeft = UDim.new(0,12), PaddingRight = UDim.new(0,10)})
@@ -1612,14 +1746,33 @@ function Hwan:CreateWindow(opts)
         end
     end))
 
+    -- ToggleKey handling: accepts string like "K" or Enum.KeyCode
+    local function isToggleKeyPressed(input)
+        if input.UserInputType ~= Enum.UserInputType.Keyboard then return false end
+        local tk = cfg.ToggleKey
+        if typeof(tk) == "EnumItem" and tk.EnumType == Enum.KeyCode then
+            return input.KeyCode == tk
+        elseif type(tk) == "string" then
+            local name = string.upper(tk)
+            return tostring(input.KeyCode.Name) == name
+        elseif typeof(tk) == "EnumItem" and tk.EnumType ~= Enum.KeyCode then
+            return false
+        end
+        return false
+    end
+
     addConn(UserInputService.InputBegan:Connect(function(input, gameProcessed)
-        local keycode = cfg.ToggleKey or Enum.KeyCode.LeftAlt
         if gameProcessed then return end
-        if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == keycode then
+        if isToggleKeyPressed(input) then
             if cfg.KeySystem and (not (_G.Hwan and _G.Hwan.auth)) then return end
             toggleVisible()
         end
     end))
+
+    -- Expose API to change toggle key
+    function window:SetToggleKey(k)
+        cfg.ToggleKey = k
+    end
 
     pcall(function()
         local vu = game:GetService("VirtualUser")
@@ -1635,6 +1788,29 @@ function Hwan:CreateWindow(opts)
             addConn(afkConn)
         end
     end)
+
+    -- apply theme function (update fields and visual)
+    local function applyTheme(theme)
+        for kk, vv in pairs(theme) do cfg.Theme[kk] = vv end
+        if refs.Frame then refs.Frame.BackgroundColor3 = cfg.Theme.Main end
+        if refs.MainDivider then refs.MainDivider.BackgroundColor3 = cfg.Theme.TabBg end
+        if refs.InfoBar then refs.InfoBar.BackgroundColor3 = cfg.Theme.InfoBg end
+        if refs.InfoText then refs.InfoText.TextColor3 = cfg.Theme.Text end
+        if refs.HwanBtn then refs.HwanBtn.BackgroundColor3 = cfg.Theme.InfoInner end
+        if refs.HwanInner then refs.HwanInner.BackgroundColor3 = cfg.Theme.InfoInner end
+        if refs.TitleMain then refs.TitleMain.TextColor3 = cfg.Theme.NameText; refs.TitleMain.TextStrokeColor3 = cfg.Theme.NameStroke end
+        if titleGrad then titleGrad.Color = ColorSequence.new(cfg.Theme.NameGradientColors) end
+        for _, t in ipairs(tabList) do
+            if t.Button then t.Button.BackgroundColor3 = cfg.Theme.TabBg; t.Button.TextColor3 = darkenColor(cfg.Theme.Text, 0.18) end
+            if t.Content then
+                for _, child in ipairs(t.Content:GetDescendants()) do
+                    if child:IsA("TextLabel") or child:IsA("TextButton") or child:IsA("TextBox") then
+                        pcall(function() child.TextColor3 = cfg.Theme.Text end)
+                    end
+                end
+            end
+        end
+    end
 
     -- expose API
     function window:CreateTab(name) return createTab(name) end
@@ -1653,24 +1829,7 @@ function Hwan:CreateWindow(opts)
         elseif type(newTheme) == "table" then
             for kk,vv in pairs(newTheme) do cfg.Theme[kk] = vv end
         end
-        -- apply to refs
-        if refs.Frame then refs.Frame.BackgroundColor3 = cfg.Theme.Main end
-        if refs.Divider0 then refs.Divider0.BackgroundColor3 = cfg.Theme.TabBg end
-        if refs.InfoBar then refs.InfoBar.BackgroundColor3 = cfg.Theme.InfoBg end
-        if refs.InfoText then refs.InfoText.TextColor3 = cfg.Theme.Text end
-        if refs.HwanBtn then refs.HwanBtn.BackgroundColor3 = cfg.Theme.InfoInner end
-        if refs.HwanInner then refs.HwanInner.BackgroundColor3 = cfg.Theme.InfoInner end
-        if refs.TitleMain then refs.TitleMain.TextColor3 = cfg.Theme.Accent end
-        for _, t in ipairs(tabList) do
-            if t.Button then t.Button.BackgroundColor3 = cfg.Theme.TabBg; t.Button.TextColor3 = darkenColor(cfg.Theme.Text, 0.18) end
-            if t.Content then
-                for _, child in ipairs(t.Content:GetDescendants()) do
-                    if child:IsA("TextLabel") or child:IsA("TextButton") or child:IsA("TextBox") then
-                        pcall(function() child.TextColor3 = cfg.Theme.Text end)
-                    end
-                end
-            end
-        end
+        applyTheme(cfg.Theme)
     end
     function window:GetFlag(name) return window.Flags[name] end
     function window:SetFlag(name, val) if window.Flags[name] and window.Flags[name].Set then window.Flags[name].Set(val) else window.Flags[name] = { Value = val } end end
@@ -1700,7 +1859,7 @@ function Hwan:CreateWindow(opts)
 
         conns = nil
         notifQueue = nil
-        notifShowing = nil
+        activeNotifs = nil
         pcall(saveConfig)
     end
 
@@ -1718,7 +1877,7 @@ function Hwan:CreateWindow(opts)
                 _G.Hwan.auth = true
                 Frame.Visible = true
                 HwanBtn.Visible = (cfg.ShowToggleIcon ~= false)
-                tween(Frame, {Size = finalSize}, 0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+                tween(Frame, {Size = UDim2.new(0, cfg.Width, 0, cfg.Height)}, 0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
                 showNotification("Welcome to " .. (cfg.Title or "Hwan Hub"))
             end)
         else
@@ -1726,7 +1885,7 @@ function Hwan:CreateWindow(opts)
             Frame.Visible = true
             HwanBtn.Visible = (cfg.ShowToggleIcon ~= false)
             task.wait(0.06)
-            tween(Frame, {Size = finalSize}, 0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+            tween(Frame, {Size = UDim2.new(0, cfg.Width, 0, cfg.Height)}, 0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
         end
     end)
 
