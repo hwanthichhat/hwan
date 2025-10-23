@@ -1,7 +1,7 @@
--- Hwan (Hwan UI library)
+-- Hwan (Hwan UI library) - Fixed & Hardened version
 -- Usage:
 -- local Hwan = loadstring(game:HttpGet('https://raw.githubusercontent.com/hwanthichhat/hwan/main/libs/hwanlibs.lua'))()
--- local Window = Hwan:CreateWindow({ Name = "My Window", KeySystem = false, ConfigurationSaving = { Enabled = true, FileName = "MyUI" }, Theme = "Dark" })
+-- local Window = Hwan:CreateWindow({ Name = "My Window", KeySystem = false, ConfigurationSaving = { Enabled = true, FileName = "MyUI" }, Theme = "Dark", Debug = false })
 
 local Hwan = {}
 Hwan.__index = Hwan
@@ -72,6 +72,7 @@ local function tween(inst, props, time, style, dir)
     style = style or Enum.EasingStyle.Quad
     dir = dir or Enum.EasingDirection.Out
     pcall(function()
+        if not inst or not inst.Parent then return end
         TweenService:Create(inst, TweenInfo.new(time, style, dir), props):Play()
     end)
 end
@@ -104,7 +105,7 @@ local DEFAULT = {
     Height = 500,
     Title = "HWAN HUB",
     ShowToggleIcon = true,
-    KeySystem = true, -- enable key system by default, can be overridden by opts
+    KeySystem = true, -- keep default as original; pass KeySystem = false to disable
     KeySettings = nil,
     Theme = "Dark", -- default theme name
     Corner = UDim.new(0,12),
@@ -202,6 +203,23 @@ function Hwan:CreateWindow(opts)
     cfg.KeySettings.GrabKeyFromSite = (cfg.KeySettings.GrabKeyFromSite == true)
     cfg.KeySettings.Key = cfg.KeySettings.Key or {}
 
+    -- local helpers that rely on cfg (debug-safe)
+    local function dbgWarn(...)
+        if cfg and cfg.Debug then
+            warn("[Hwan Debug]", ...)
+        end
+    end
+    local function safeCallLocal(fn, ...)
+        local ok, res = pcall(fn, ...)
+        if not ok then dbgWarn("safeCall error:", res) end
+        return ok, res
+    end
+    local function safeSetLocal(inst, k, v)
+        local ok, err = pcall(function() inst[k] = v end)
+        if not ok then dbgWarn(("failed to set %s on %s — %s"):format(tostring(k), tostring(inst and (inst.ClassName or inst.Name) or "Instance"), tostring(err))) end
+        return ok
+    end
+
     local conns = {}
     local function addConn(c) if c then table.insert(conns, c) end end
 
@@ -283,10 +301,13 @@ function Hwan:CreateWindow(opts)
     })
     dividerGrad.Rotation = 0
 
-    local gradSpeed = 80
-    local gradConn = RunService.RenderStepped:Connect(function(dt)
+    -- rotate divider more cheaply on Heartbeat
+    local gradSpeed = 36
+    local gradConn = RunService.Heartbeat:Connect(function(dt)
         pcall(function()
-            dividerGrad.Rotation = (dividerGrad.Rotation + dt * gradSpeed) % 360
+            if dividerGrad and dividerGrad.Parent and dividerGrad.Rotation then
+                dividerGrad.Rotation = (dividerGrad.Rotation + (dt * gradSpeed)) % 360
+            end
         end)
     end)
     addConn(gradConn)
@@ -481,12 +502,14 @@ function Hwan:CreateWindow(opts)
 
         local function revealPendingText()
             if #pendingTextNodes == 0 then return end
-            for _, node in ipairs(pendingTextNodes) do
-                pcall(function()
-                    if node and node.Parent then
+            for i = #pendingTextNodes, 1, -1 do
+                local node = pendingTextNodes[i]
+                if node and node.Parent then
+                    pcall(function()
                         TweenService:Create(node, TweenInfo.new(0.18, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {TextTransparency = 0}):Play()
-                    end
-                end)
+                    end)
+                end
+                pendingTextNodes[i] = nil
             end
             pendingTextNodes = {}
         end
@@ -665,7 +688,9 @@ function Hwan:CreateWindow(opts)
 
             local function closePanel()
                 if followConn then pcall(function() followConn:Disconnect() end) end
+                followConn = nil
                 if escConn then pcall(function() escConn:Disconnect() end) end
+                escConn = nil
                 if panel and panel.Parent then
                     pcall(function()
                         local curPos = panel.Position
@@ -675,10 +700,8 @@ function Hwan:CreateWindow(opts)
                     end)
                 end
                 panel = nil
-                escConn = nil
-                followConn = nil
                 if instance and window and window._dropdownStates then
-                    window._dropdownStates[instance] = false
+                    window._dropdownStates[uid] = false
                 end
             end
 
@@ -797,8 +820,17 @@ function Hwan:CreateWindow(opts)
                     end
                 end
 
+                -- animate open
                 tween(panel, {BackgroundTransparency = 0, Position = UDim2.new(panel.Position.X.Scale, panel.Position.X.Offset, panel.Position.Y.Scale, panel.Position.Y.Offset + 8)}, 0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
                 tween(header, {TextTransparency = 0}, 0.18)
+
+                -- follow camera/resize/viewport changes
+                if not followConn then
+                    followConn = RunService.Heartbeat:Connect(function()
+                        pcall(updatePanelPos)
+                    end)
+                end
+                -- store followConn in outer scope so closePanel disconnects it
             end
 
             local opening = false
@@ -821,7 +853,7 @@ function Hwan:CreateWindow(opts)
                 window._dropdownInstances = window._dropdownInstances or {}
                 table.insert(window._dropdownInstances, instance)
                 window._dropdownStates = window._dropdownStates or {}
-                window._dropdownStates[instance] = false
+                window._dropdownStates[uid] = false
                 window._savedState = window._savedState or {}
                 window._savedState.dropdownSelections = window._savedState.dropdownSelections or {}
             end
@@ -911,6 +943,7 @@ function Hwan:CreateWindow(opts)
                         return
                     end
                 end)
+                -- inputConn is temporary; don't add to global conns
             end
 
             addConn(btn.MouseButton1Click:Connect(function()
@@ -992,11 +1025,30 @@ function Hwan:CreateWindow(opts)
             task.defer(function() RunService.Heartbeat:Wait(); setFromPercent(defaultPct, true) end)
 
             local dragging = false
-            local inputChangedConn
-            addConn(track.InputBegan:Connect(function(input)
+            local inputChangedConn -- local temporary connection (not added to conns)
+
+            -- unified input handling for slider (click + drag)
+            local function onInputBegan(input)
                 if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
                     dragging = true
                     preventWindowDrag = true
+
+                    -- initial set pos (click)
+                    local pos = nil
+                    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+                        pos = UserInputService:GetMouseLocation()
+                    else
+                        pos = input.Position
+                    end
+                    if pos then
+                        local absX = pos.X
+                        local left = track.AbsolutePosition.X
+                        local width = math.max(1, track.AbsoluteSize.X)
+                        local pct = (absX - left) / width
+                        setFromPercent(pct, false)
+                    end
+
+                    -- listen movement
                     inputChangedConn = UserInputService.InputChanged:Connect(function(inp)
                         if dragging and (inp.UserInputType == Enum.UserInputType.MouseMovement or inp.UserInputType == Enum.UserInputType.Touch) then
                             local absX = inp.Position.X
@@ -1006,29 +1058,24 @@ function Hwan:CreateWindow(opts)
                             setFromPercent(pct, false)
                         end
                     end)
-                    addConn(inputChangedConn)
-                    input.Changed:Connect(function()
+
+                    -- cleanup when input ends
+                    local endedConn
+                    endedConn = input.Changed:Connect(function()
                         if input.UserInputState == Enum.UserInputState.End then
                             dragging = false
                             preventWindowDrag = false
-                            if inputChangedConn then pcall(function() inputChangedConn:Disconnect() end) end
+                            if inputChangedConn then
+                                pcall(function() inputChangedConn:Disconnect() end)
+                                inputChangedConn = nil
+                            end
+                            if endedConn then pcall(function() endedConn:Disconnect() end) end
                         end
                     end)
                 end
-            end))
+            end
 
-            addConn(track.InputBegan:Connect(function(input)
-                if input.UserInputType == Enum.UserInputType.MouseButton1 then
-                    local pos = UserInputService:GetMouseLocation()
-                    if pos then
-                        local mx = pos.X
-                        local left = track.AbsolutePosition.X
-                        local width = math.max(1, track.AbsoluteSize.X)
-                        local pct = (mx - left) / width
-                        setFromPercent(pct, false)
-                    end
-                end
-            end))
+            addConn(track.InputBegan:Connect(onInputBegan))
 
             if flag and type(flag) == "string" then
                 registerFlag(flag, { Type = "Slider", Get = function()
@@ -1144,46 +1191,59 @@ function Hwan:CreateWindow(opts)
     local maxPingSamples = 30
     local pingTimer = 0
     local pingInterval = 0.25
-    addConn(RunService.RenderStepped:Connect(function(dt)
-        if titleGrad then titleGrad.Rotation = (titleGrad.Rotation + 0.9) % 360 end
-        if hwanTopGrad then hwanTopGrad.Rotation = (hwanTopGrad.Rotation + 1.6) % 360 end
-        if hwanBottomGrad then hwanBottomGrad.Rotation = (hwanBottomGrad.Rotation + 1.6) % 360 end
 
-        local timeStr = os.date("%H:%M:%S")
-        local fps = 0
-        if dt > 0 then fps = math.floor(1/dt + 0.5) end
-
-        pingTimer = pingTimer + dt
-        local pingMs = 0
-        if pingTimer >= pingInterval then
-            pingTimer = pingTimer - pingInterval
-            local ok, pingValue = pcall(function() return game:GetService("Stats").Network.ServerStatsItem["Data Ping"] end)
-            if ok and pingValue and typeof(pingValue.GetValueString) == "function" then
-                local ok2, str = pcall(function() return pingValue:GetValueString() end)
-                if ok2 and str then pingMs = tonumber(str:match("%d+")) or 0 end
+    -- Render updates: keep visuals smooth but cheap; skip updates when frame invisible
+    local renderConn = RunService.RenderStepped:Connect(function(dt)
+        pcall(function()
+            if not Frame or (Frame and not Frame.Visible) then
+                -- still rotate titleGrad a little for subtlety only when visible
+                return
             end
-            table.insert(pingSamples, pingMs)
-            if #pingSamples > maxPingSamples then table.remove(pingSamples, 1) end
-        else
-            if #pingSamples > 0 then pingMs = pingSamples[#pingSamples] end
-        end
+            if titleGrad and titleGrad.Parent then titleGrad.Rotation = (titleGrad.Rotation + 0.9) % 360 end
+            if hwanTopGrad and hwanTopGrad.Parent then hwanTopGrad.Rotation = (hwanTopGrad.Rotation + 1.6) % 360 end
+            if hwanBottomGrad and hwanBottomGrad.Parent then hwanBottomGrad.Rotation = (hwanBottomGrad.Rotation + 1.6) % 360 end
+        end)
 
-        local mean, std = 0, 0
-        if #pingSamples > 0 then
-            local sum = 0
-            for _, v in ipairs(pingSamples) do sum = sum + v end
-            mean = sum / #pingSamples
-            local sqsum = 0
-            for _, v in ipairs(pingSamples) do sqsum = sqsum + (v - mean) * (v - mean) end
-            std = math.sqrt(sqsum / #pingSamples)
-        end
-        local cvPercent = 0
-        if mean > 0 then cvPercent = math.floor((std / mean) * 100 + 0.5) end
+        -- Info updates: use dt for FPS but compute ping on interval
+        pcall(function()
+            if not refs.InfoText then return end
+            local timeStr = os.date("%H:%M:%S")
+            local fps = 0
+            if dt > 0 then fps = math.floor(1/dt + 0.5) end
 
-        if refs.InfoText then
-            refs.InfoText.Text = string.format("TIME : %s   |   FPS: %d   |   PING: %d ms (%d%%CV)", timeStr, fps, pingMs, cvPercent)
-        end
-    end))
+            pingTimer = pingTimer + dt
+            local pingMs = 0
+            if pingTimer >= pingInterval then
+                pingTimer = pingTimer - pingInterval
+                local ok, pingValue = pcall(function() return game:GetService("Stats").Network.ServerStatsItem["Data Ping"] end)
+                if ok and pingValue and typeof(pingValue.GetValueString) == "function" then
+                    local ok2, str = pcall(function() return pingValue:GetValueString() end)
+                    if ok2 and str then pingMs = tonumber(str:match("%d+")) or 0 end
+                end
+                table.insert(pingSamples, pingMs)
+                if #pingSamples > maxPingSamples then table.remove(pingSamples, 1) end
+            else
+                if #pingSamples > 0 then pingMs = pingSamples[#pingSamples] end
+            end
+
+            local mean, std = 0, 0
+            if #pingSamples > 0 then
+                local sum = 0
+                for _, v in ipairs(pingSamples) do sum = sum + v end
+                mean = sum / #pingSamples
+                local sqsum = 0
+                for _, v in ipairs(pingSamples) do sqsum = sqsum + (v - mean) * (v - mean) end
+                std = math.sqrt(sqsum / #pingSamples)
+            end
+            local cvPercent = 0
+            if mean > 0 then cvPercent = math.floor((std / mean) * 100 + 0.5) end
+
+            if refs.InfoText then
+                refs.InfoText.Text = string.format("TIME : %s   |   FPS: %d   |   PING: %d ms (%d%%CV)", timeStr, fps, pingMs, cvPercent)
+            end
+        end)
+    end)
+    addConn(renderConn)
 
     local notifQueue = {}
     local notifShowing = false
@@ -1235,13 +1295,21 @@ function Hwan:CreateWindow(opts)
         tween(body, {TextTransparency = 0}, 0.14, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
 
         task.delay(duration, function()
-            tween(notif, {BackgroundTransparency = 1}, 0.12)
-            tween(header, {TextTransparency = 1}, 0.12)
-            tween(body, {TextTransparency = 1}, 0.12)
-            task.wait(0.12)
-            safeDestroy(notif)
-            notifShowing = false
-            processNextNotification()
+            pcall(function()
+                -- abort if notif destroyed
+                if not notif or not notif.Parent then
+                    notifShowing = false
+                    processNextNotification()
+                    return
+                end
+                tween(notif, {BackgroundTransparency = 1}, 0.12)
+                tween(header, {TextTransparency = 1}, 0.12)
+                tween(body, {TextTransparency = 1}, 0.12)
+                task.wait(0.12)
+                safeDestroy(notif)
+                notifShowing = false
+                processNextNotification()
+            end)
         end)
     end
 
@@ -1277,14 +1345,19 @@ function Hwan:CreateWindow(opts)
                     out[flagName] = { __enum = "KeyCode", name = val.Name }
                 elseif typeof(val) == "Color3" then
                     out[flagName] = { __color = color3ToHex(val) }
-                else
+                elseif type(val) == "number" or type(val) == "string" or type(val) == "boolean" or type(val) == "table" then
+                    -- allow primitive/table (tables should be serializable); skip otherwise
                     out[flagName] = val
+                else
+                    dbgWarn("Skipping unsupported flag type for saving:", flagName, typeof(val))
                 end
             end
         end
         local ok, encoded = pcall(function() return HttpService:JSONEncode(out) end)
         if ok and encoded then
             writeFileSafe(configFileName(), encoded)
+        else
+            dbgWarn("Failed to JSONEncode config for saving.")
         end
     end
 
@@ -1334,7 +1407,10 @@ function Hwan:CreateWindow(opts)
         local function fetchKeysFromUrl(url)
             if not url or type(url) ~= "string" then return end
             local ok, res = pcall(function() return game:HttpGet(url) end)
-            if not ok or not res then return end
+            if not ok or not res then
+                dbgWarn("fetchKeysFromUrl failed for", url)
+                return
+            end
             for line in res:gmatch("[^\r\n]+") do
                 local t = line:gsub("^%s*(.-)%s*$","%1")
                 if t ~= "" then allowed[t] = true end
@@ -1679,29 +1755,45 @@ function Hwan:CreateWindow(opts)
 
     local oldDestroy
     oldDestroy = function()
+        -- Close dropdowns
         for _, inst in ipairs(window._dropdownInstances or {}) do
             pcall(function() if inst and inst.Close then inst.Close() end end)
         end
-        for i = #conns, 1, -1 do
-            local c = conns[i]
-            pcall(function()
-                if c and c.Disconnect then c:Disconnect()
-                elseif c and c.disconnect then c:disconnect()
-                end
-            end)
-            conns[i] = nil
+
+        -- Disconnect stored connections
+        if conns then
+            for i = #conns, 1, -1 do
+                local c = conns[i]
+                pcall(function()
+                    if c and c.Disconnect then c:Disconnect()
+                    elseif c and c.disconnect then c:disconnect()
+                    end
+                end)
+                conns[i] = nil
+            end
         end
 
+        -- Save config (best-effort)
+        pcall(saveConfig)
+
+        -- Destroy root gui safely
         pcall(function() if screenGui and screenGui.Parent then screenGui:Destroy() end end)
 
+        -- Clear global reference if set
         if _G.Hwan and _G.Hwan.screenGui == screenGui then
             _G.Hwan = nil
         end
 
-        conns = nil
-        notifQueue = nil
-        notifShowing = nil
-        pcall(saveConfig)
+        -- nil references to help GC
+        window.Flags = nil
+        window._dropdownInstances = nil
+        window._dropdownStates = nil
+        window._savedState = nil
+        refs = nil
+        screenGui = nil
+        Frame = nil
+        HwanBtn = nil
+        window = nil
     end
 
     function window:Destroy()
