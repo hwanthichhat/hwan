@@ -1,6 +1,10 @@
--- HwanUI
-local HwanUI = {}
-HwanUI.__index = HwanUI
+-- Hwan (Hwan UI library)
+-- Usage:
+-- local Hwan = loadstring(game:HttpGet('https://raw.githubusercontent.com/hwanthichhat/hwan/main/libs/hwanlibs.lua'))()
+-- local Window = Hwan:CreateWindow({ Name = "My Window", KeySystem = false, ConfigurationSaving = { Enabled = true, FileName = "MyUI" }, Theme = "Dark" })
+
+local Hwan = {}
+Hwan.__index = Hwan
 
 -- Services
 local Players = game:GetService("Players")
@@ -11,6 +15,20 @@ local Workspace = game:GetService("Workspace")
 local HttpService = game:GetService("HttpService")
 local TextService = game:GetService("TextService")
 local LocalPlayer = Players.LocalPlayer
+
+-- Predefined themes
+local THEMES = {
+    Dark = {
+        Main = Color3.fromRGB(18,18,18),
+        TabBg = Color3.fromRGB(40,40,40),
+        Accent = Color3.fromRGB(245,245,245),
+        Text = Color3.fromRGB(235,235,235),
+        InfoBg = Color3.fromRGB(10,10,10),
+        InfoInner = Color3.fromRGB(18,18,18),
+        Btn = Color3.fromRGB(50,50,50),
+        ToggleBg = Color3.fromRGB(80,80,80),
+    }
+}
 
 -- Helpers
 local function getGuiParent()
@@ -23,7 +41,7 @@ local function getGuiParent()
         if ok and g then return g end
     end
     if LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui") then
-        return LocalPlayer:FindFirstChild("PlayerGui")
+        return LocalPlayer.PlayerGui
     end
     return game:GetService("CoreGui")
 end
@@ -54,8 +72,7 @@ local function tween(inst, props, time, style, dir)
     style = style or Enum.EasingStyle.Quad
     dir = dir or Enum.EasingDirection.Out
     pcall(function()
-        local info = TweenInfo.new(time, style, dir)
-        TweenService:Create(inst, info, props):Play()
+        TweenService:Create(inst, TweenInfo.new(time, style, dir), props):Play()
     end)
 end
 
@@ -81,46 +98,35 @@ local function escapeHtml(s)
     return tostring(s):gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;")
 end
 
--- Clean previous
-if _G.HwanHubData then
-    if _G.HwanHubData.conns then
-        for _, c in ipairs(_G.HwanHubData.conns) do
-            pcall(function()
-                if c and c.Disconnect then c:Disconnect() end
-                if c and c.disconnect then c:disconnect() end
-            end)
-        end
-    end
-    if _G.HwanHubData.screenGui and _G.HwanHubData.screenGui.Parent then
-        pcall(function() _G.HwanHubData.screenGui:Destroy() end)
-    end
-    _G.HwanHubData = nil
-end
-
 -- Defaults
 local DEFAULT = {
     Width = 300,
     Height = 500,
     Title = "HWAN HUB",
     ShowToggleIcon = true,
-    KeySystem = true,
-    AccessKey = "hwandeptrai",
-    KeyUrl = nil,
-    Theme = {
-        Main = Color3.fromRGB(18,18,18),
-        TabBg = Color3.fromRGB(40,40,40),
-        Accent = Color3.fromRGB(245,245,245),
-        Text = Color3.fromRGB(235,235,235),
-        InfoBg = Color3.fromRGB(10,10,10),
-        InfoInner = Color3.fromRGB(18,18,18),
-        Btn = Color3.fromRGB(50,50,50),
-        ToggleBg = Color3.fromRGB(80,80,80),
-    },
+    KeySystem = true, -- enable key system by default, can be overridden by opts
+    KeySettings = nil,
+    Theme = "Dark", -- default theme name
     Corner = UDim.new(0,12),
     ToggleKey = Enum.KeyCode.LeftAlt,
+    ConfigurationSaving = { Enabled = false, FolderName = nil, FileName = nil },
 }
 
-function HwanUI:CreateWindow(title, opts)
+-- File helpers
+local function writeFileSafe(path, data)
+    if writefile then
+        pcall(writefile, path, data)
+    end
+end
+local function readFileSafe(path)
+    if isfile then
+        local ok, res = pcall(readfile, path)
+        if ok then return res end
+    end
+    return nil
+end
+
+function Hwan:CreateWindow(opts)
     opts = opts or {}
     local cfg = {}
     for k,v in pairs(DEFAULT) do
@@ -131,24 +137,77 @@ function HwanUI:CreateWindow(title, opts)
             cfg[k] = v
         end
     end
-    if title and type(title) == "string" then cfg.Title = title end
-    for k,v in pairs(opts) do
-        if k == "Theme" and type(v) == "table" then
-            for kk,vv in pairs(v) do cfg.Theme[kk] = vv end
-        else
-            cfg[k] = v
+
+    if type(opts) == "string" then
+        cfg.Title = opts
+    elseif type(opts) == "table" then
+        if opts.Name then cfg.Title = opts.Name end
+        for k,v in pairs(opts) do
+            if k == "Theme" and type(v) == "table" then
+                -- handled below to merge with theme table correctly
+            elseif k == "Theme" and type(v) == "string" then
+                -- handled below
+            else
+                cfg[k] = v
+            end
         end
     end
+
+    -- Normalize theme option: accept string (theme name) or table (custom)
+    if type(opts) == "table" and opts.Theme then
+        if type(opts.Theme) == "string" then
+            cfg.Theme = opts.Theme
+        elseif type(opts.Theme) == "table" then
+            cfg.Theme = opts.Theme
+        end
+    end
+
+    if type(cfg.Theme) == "string" then
+        local tname = cfg.Theme
+        if THEMES[tname] then
+            cfg.Theme = {}
+            for kk,vv in pairs(THEMES[tname]) do cfg.Theme[kk] = vv end
+        else
+            -- fallback to Dark if unknown
+            cfg.Theme = {}
+            for kk,vv in pairs(THEMES.Dark) do cfg.Theme[kk] = vv end
+        end
+    elseif type(cfg.Theme) == "table" then
+        -- merge with Dark defaults to ensure complete set
+        local merged = {}
+        for kk,vv in pairs(THEMES.Dark) do merged[kk] = vv end
+        for kk,vv in pairs(cfg.Theme) do merged[kk] = vv end
+        cfg.Theme = merged
+    else
+        cfg.Theme = {}
+        for kk,vv in pairs(THEMES.Dark) do cfg.Theme[kk] = vv end
+    end
+
+    -- Normalize key system + settings (migration & compatibility)
+    cfg.KeySettings = cfg.KeySettings or {}
+    if type(opts) == "table" and opts.KeySettings ~= nil then
+        cfg.KeySystem = true
+    end
+    -- migrate legacy fields if present in opts
+    if cfg.AccessKey and (cfg.KeySettings.Key == nil or #cfg.KeySettings.Key == 0) then
+        cfg.KeySettings.Key = cfg.KeySettings.Key or {}
+        table.insert(cfg.KeySettings.Key, tostring(cfg.AccessKey))
+    end
+    if cfg.KeyUrl and (not cfg.KeySettings.KeyUrl) then
+        cfg.KeySettings.KeyUrl = cfg.KeySettings.KeyUrl or cfg.KeyUrl
+    end
+    cfg.KeySettings.Title = cfg.KeySettings.Title or (cfg.Title .. " | Key System")
+    cfg.KeySettings.FileName = cfg.KeySettings.FileName or (cfg.Title .. "_key.txt")
+    cfg.KeySettings.SaveKey = (cfg.KeySettings.SaveKey == true)
+    cfg.KeySettings.GrabKeyFromSite = (cfg.KeySettings.GrabKeyFromSite == true)
+    cfg.KeySettings.Key = cfg.KeySettings.Key or {}
 
     local conns = {}
     local function addConn(c) if c then table.insert(conns, c) end end
 
-    local notifQueue = {}
-    local notifShowing = false
-
     local host = getGuiParent()
     local screenGui = new("ScreenGui")
-    screenGui.Name = (cfg.Title:gsub("%s+", "") or "HwanHub") .. "_GUI"
+    screenGui.Name = (cfg.Title:gsub("%s+", "") or "Hwan") .. "_GUI"
     screenGui.ResetOnSpawn = false
     screenGui.Parent = host
     protectGui(screenGui)
@@ -203,34 +262,34 @@ function HwanUI:CreateWindow(title, opts)
     new("UICorner", {Parent = TabsHolder, CornerRadius = UDim.new(0,8)})
 
     local dividerY = 100
-local divider0 = new("Frame", {
-    Parent = Frame,
-    Name = "Divider0",
-    Size = UDim2.new(1, -16, 0, 2),
-    Position = UDim2.new(0, 8, 0, dividerY + 8),
-    BackgroundColor3 = cfg.Theme.TabBg,
-    BorderSizePixel = 0
-})
-refs.Divider0 = divider0
-divider0.ClipsDescendants = true
+    local divider0 = new("Frame", {
+        Parent = Frame,
+        Name = "Divider0",
+        Size = UDim2.new(1, -16, 0, 2),
+        Position = UDim2.new(0, 8, 0, dividerY + 8),
+        BackgroundColor3 = cfg.Theme.TabBg,
+        BorderSizePixel = 0
+    })
+    refs.Divider0 = divider0
+    divider0.ClipsDescendants = true
 
-local dividerGrad = new("UIGradient", { Parent = divider0 })
-dividerGrad.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0.00, Color3.fromRGB(255,255,255)),
-    ColorSequenceKeypoint.new(0.35, Color3.fromRGB(200,200,200)),
-    ColorSequenceKeypoint.new(0.50, Color3.fromRGB(30,30,30)),
-    ColorSequenceKeypoint.new(0.65, Color3.fromRGB(200,200,200)),
-    ColorSequenceKeypoint.new(1.00, Color3.fromRGB(255,255,255)),
-})
-dividerGrad.Rotation = 0
+    local dividerGrad = new("UIGradient", { Parent = divider0 })
+    dividerGrad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0.00, Color3.fromRGB(255,255,255)),
+        ColorSequenceKeypoint.new(0.35, Color3.fromRGB(200,200,200)),
+        ColorSequenceKeypoint.new(0.50, Color3.fromRGB(30,30,30)),
+        ColorSequenceKeypoint.new(0.65, Color3.fromRGB(200,200,200)),
+        ColorSequenceKeypoint.new(1.00, Color3.fromRGB(255,255,255)),
+    })
+    dividerGrad.Rotation = 0
 
-local gradSpeed = 80 -- chỉnh nhanh/nhẹ ở đây
-local gradConn = RunService.RenderStepped:Connect(function(dt)
-    pcall(function()
-        dividerGrad.Rotation = (dividerGrad.Rotation + dt * gradSpeed) % 360
+    local gradSpeed = 80
+    local gradConn = RunService.RenderStepped:Connect(function(dt)
+        pcall(function()
+            dividerGrad.Rotation = (dividerGrad.Rotation + dt * gradSpeed) % 360
+        end)
     end)
-end)
-addConn(gradConn)
+    addConn(gradConn)
 
     local InfoBar = new("Frame", {Parent = screenGui, Name = "InfoBar", Size = UDim2.new(0, 360, 0, 36), Position = UDim2.new(1, -376, 0, 16), BackgroundColor3 = cfg.Theme.InfoBg, BorderSizePixel = 0, ZIndex = 50})
     refs.InfoBar = InfoBar
@@ -270,8 +329,11 @@ addConn(gradConn)
     new("UIPadding", {Parent = contentArea, PaddingLeft = UDim.new(0,8), PaddingRight = UDim.new(0,8), PaddingTop = UDim.new(0,4), PaddingBottom = UDim.new(0,12)})
     refs.ContentArea = contentArea
 
-    -- window reference early for closures
     local window = { _dropdownInstances = {}, _dropdownStates = {}, _activeTabIndex = 1, _savedState = { active = nil, dropdownSelections = {} } }
+    window._config = cfg
+    window.Root = screenGui
+    window.Main = Frame
+    window.Flags = {}
 
     local pages = {}
     local tabList = {}
@@ -322,14 +384,9 @@ addConn(gradConn)
             end
         end
         local totalWidth = padding * (#tabList + 1) + #tabList * slotWidth
-        if #tabList > 3 then
-            tabScroll.AutomaticCanvasSize = Enum.AutomaticSize.None
-            tabScroll.CanvasSize = UDim2.new(0, totalWidth, 0, 0)
-        else
-            tabScroll.AutomaticCanvasSize = Enum.AutomaticSize.None
-            tabScroll.CanvasSize = UDim2.new(0, math.max(totalWidth, avail), 0, 0)
-            tabScroll.CanvasPosition = Vector2.new(0,0)
-        end
+        tabScroll.AutomaticCanvasSize = Enum.AutomaticSize.None
+        tabScroll.CanvasSize = UDim2.new(0, math.max(totalWidth, avail), 0, 0)
+        if #tabList <= 3 then tabScroll.CanvasPosition = Vector2.new(0,0) end
         clampCanvas()
     end
 
@@ -368,21 +425,12 @@ addConn(gradConn)
         addConn(conn2)
     end
 
-    local function ensureTabVisible(btn)
-        pcall(function()
-            local btnAbs = btn.AbsolutePosition.X
-            local btnW = btn.AbsoluteSize.X
-            local scrollAbs = tabScroll.AbsolutePosition.X
-            local scrollW = tabScroll.AbsoluteSize.X
-            local curCanvas = tabScroll.CanvasPosition.X
-            local target = btnAbs - scrollAbs + curCanvas - (scrollW/2 - btnW/2)
-            local maxX = math.max(tabScroll.AbsoluteCanvasSize.X - tabScroll.AbsoluteSize.X, 0)
-            target = clampVal(target, 0, maxX)
-            tweenCanvasTo(target, 0.28)
-        end)
-    end
-
     local preventWindowDrag = false
+
+    local function registerFlag(name, meta)
+        if not name or name == "" then return end
+        window.Flags[name] = meta or {}
+    end
 
     local function createTab(name)
         local idx = #tabList + 1
@@ -391,7 +439,7 @@ addConn(gradConn)
             Text = name,
             Size = UDim2.new(0,96,0,32),
             BackgroundColor3 = cfg.Theme.TabBg,
-            TextColor3 = darkTabText,
+            TextColor3 = darkenColor(cfg.Theme.Text, 0.18),
             Font = Enum.Font.SourceSansBold,
             TextSize = 16,
             TextXAlignment = Enum.TextXAlignment.Center,
@@ -416,8 +464,7 @@ addConn(gradConn)
         content.Visible = false
 
         local contentLayout = new("UIListLayout", {Parent = content, FillDirection = Enum.FillDirection.Vertical, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0,10)})
-        local contentPad = new("UIPadding", {Parent = content, PaddingLeft = UDim.new(0,6), PaddingRight = UDim.new(0,6), PaddingTop = UDim.new(0,6)})
-        table.insert(pages, content)
+        new("UIPadding", {Parent = content, PaddingLeft = UDim.new(0,6), PaddingRight = UDim.new(0,6), PaddingTop = UDim.new(0,6)})
 
         local pendingTextNodes = {}
         local function hideTextNodesIn(obj)
@@ -490,57 +537,57 @@ addConn(gradConn)
             end
         end end))
 
-        -- CreateButton
-function tab:CreateButton(label, callback)
-    local leftText = (label and label ~= "") and label or ""
-    local btnText = (label and label ~= "") and label or "Button"
+        function tab:CreateButton(opts)
+            opts = opts or {}
+            local name = opts.Name or "Button"
+            local cb = opts.Callback
+            local row = new("Frame", {Parent = content, Size = UDim2.new(1,0,0,36), BackgroundTransparency = 1})
+            local lbl = new("TextLabel", {
+                Parent = row,
+                Text = name,
+                Size = UDim2.new(0.65, -8, 1, 0),
+                Position = UDim2.new(0,8,0,0),
+                BackgroundTransparency = 1,
+                TextColor3 = cfg.Theme.Text,
+                Font = Enum.Font.SourceSansBold,
+                TextSize = 17,
+                TextXAlignment = Enum.TextXAlignment.Left
+            })
+            local b = new("TextButton", {
+                Parent = row,
+                Size = UDim2.new(0.34, -8, 1, 0),
+                Position = UDim2.new(0.66, 4, 0, 0),
+                BackgroundColor3 = cfg.Theme.Btn,
+                TextColor3 = cfg.Theme.Text,
+                Text = name,
+                Font = Enum.Font.SourceSansBold,
+                TextSize = 17,
+                AutoButtonColor = false,
+                TextXAlignment = Enum.TextXAlignment.Center,
+                TextYAlignment = Enum.TextYAlignment.Center,
+                TextScaled = false
+            })
+            new("UICorner", {Parent = b, CornerRadius = UDim.new(0,8)})
+            addConn(b.MouseButton1Click:Connect(function()
+                if cb then pcall(cb) end
+                tween(b, {BackgroundColor3 = brightenColor(cfg.Theme.Btn, 0.12)}, 0.06)
+                task.wait(0.06)
+                tween(b, {BackgroundColor3 = cfg.Theme.Btn}, 0.12)
+            end))
+            pcall(hideTextNodesIn, row)
+            task.defer(function() pcall(updateContentCanvas) end)
+            return b
+        end
 
-    local row = new("Frame", {Parent = self.Content, Size = UDim2.new(1,0,0,36), BackgroundTransparency = 1})
-    local lbl = new("TextLabel", {
-        Parent = row,
-        Text = leftText,
-        Size = UDim2.new(0.65, -8, 1, 0),
-        Position = UDim2.new(0,8,0,0),
-        BackgroundTransparency = 1,
-        TextColor3 = cfg.Theme.Text,
-        Font = Enum.Font.SourceSansBold,
-        TextSize = 17,
-        TextXAlignment = Enum.TextXAlignment.Left
-    })
-    local b = new("TextButton", {
-        Parent = row,
-        Size = UDim2.new(0.34, -8, 1, 0),
-        Position = UDim2.new(0.66, 4, 0, 0),
-        BackgroundColor3 = cfg.Theme.Btn,
-        TextColor3 = cfg.Theme.Text,
-        Text = btnText,
-        Font = Enum.Font.SourceSansBold,
-        TextSize = 17,
-        AutoButtonColor = false,
-        TextXAlignment = Enum.TextXAlignment.Center,
-        TextYAlignment = Enum.TextYAlignment.Center,
-        TextScaled = false
-    })
-    new("UICorner", {Parent = b, CornerRadius = UDim.new(0,8)})
+        function tab:CreateToggle(opts)
+            opts = opts or {}
+            local name = opts.Name or ""
+            local flag = opts.Flag
+            local current = opts.CurrentValue or opts.Current or false
+            local cb = opts.Callback
 
-    addConn(b.MouseEnter:Connect(function() if UserInputService.MouseEnabled then tween(b, {BackgroundColor3 = brightenColor(cfg.Theme.Btn, 0.06)}, 0.10) end end))
-    addConn(b.MouseLeave:Connect(function() tween(b, {BackgroundColor3 = cfg.Theme.Btn}, 0.10) end))
-    addConn(b.MouseButton1Click:Connect(function()
-        if callback then pcall(callback) end
-        tween(b, {BackgroundColor3 = brightenColor(cfg.Theme.Btn, 0.12)}, 0.06)
-        task.wait(0.06)
-        tween(b, {BackgroundColor3 = cfg.Theme.Btn}, 0.12)
-    end))
-
-    pcall(hideTextNodesIn, row)
-    task.defer(function() pcall(updateContentCanvas) end)
-    return b
-end
-
-        -- CreateToggle
-        function tab:CreateToggle(label, initial, callback)
-            local frame = new("Frame", {Parent = self.Content, Size = UDim2.new(1,0,0,30), BackgroundTransparency = 1})
-            new("TextLabel", {Parent = frame, Text = label, Size = UDim2.new(0.65, -8, 1, 0), Position = UDim2.new(0,8,0,0), BackgroundTransparency = 1, TextColor3 = cfg.Theme.Text, Font = Enum.Font.SourceSansBold, TextSize = 17, TextXAlignment = Enum.TextXAlignment.Left})
+            local frame = new("Frame", {Parent = content, Size = UDim2.new(1,0,0,30), BackgroundTransparency = 1})
+            new("TextLabel", {Parent = frame, Text = name, Size = UDim2.new(0.65, -8, 1, 0), Position = UDim2.new(0,8,0,0), BackgroundTransparency = 1, TextColor3 = cfg.Theme.Text, Font = Enum.Font.SourceSansBold, TextSize = 17, TextXAlignment = Enum.TextXAlignment.Left})
             local toggleWidth = 54
             local toggleHeight = 24
             local pad = 6
@@ -555,7 +602,7 @@ end
             dot.AnchorPoint = Vector2.new(0.5,0.5)
             dot.Position = UDim2.new(0, margin, 0.5, 0)
 
-            local state = initial and true or false
+            local state = current and true or false
             local function setState(s, silent)
                 state = s
                 if s then
@@ -563,7 +610,7 @@ end
                 else
                     tween(dot, {Position = UDim2.new(0, margin, 0.5, 0), BackgroundColor3 = dotOffColor}, 0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
                 end
-                if callback and not silent then pcall(callback, state) end
+                if cb and not silent then pcall(cb, state) end
             end
 
             local clickBtn = new("TextButton", {Parent = toggleBg, Size = UDim2.new(1,0,1,0), Position = UDim2.new(0,0,0,0), BackgroundTransparency = 1, AutoButtonColor = false, Text = ""})
@@ -572,19 +619,23 @@ end
             setState(state, true)
             pcall(hideTextNodesIn, frame)
             task.defer(function() pcall(updateContentCanvas) end)
-            return {Get = function() return state end, Set = function(v) setState((v and true) or false) end, UI = frame}
+
+            if flag and type(flag) == "string" then
+                registerFlag(flag, { Type = "Toggle", Get = function() return state end, Set = function(v) setState((v and true) or false, true) end, UI = frame })
+            end
+
+            return { UI = frame, Get = function() return state end, Set = function(v) setState((v and true) or false) end, Flag = flag }
         end
 
-        -- CreateLabel / Section
         function tab:CreateLabel(text)
-            local l = new("TextLabel", {Parent = self.Content, Size = UDim2.new(1,0,0,20), Text = text, BackgroundTransparency = 1, TextColor3 = cfg.Theme.Text, Font = Enum.Font.SourceSansBold, TextSize = 17, TextXAlignment = Enum.TextXAlignment.Left})
+            local l = new("TextLabel", {Parent = content, Size = UDim2.new(1,0,0,20), Text = text or "", BackgroundTransparency = 1, TextColor3 = cfg.Theme.Text, Font = Enum.Font.SourceSansBold, TextSize = 17, TextXAlignment = Enum.TextXAlignment.Left})
             pcall(hideTextNodesIn, l)
             task.defer(function() pcall(updateContentCanvas) end)
             return l
         end
 
         function tab:CreateSection(title)
-            local sec = new("Frame", {Parent = self.Content, Size = UDim2.new(1,0,0,40), BackgroundTransparency = 1})
+            local sec = new("Frame", {Parent = content, Size = UDim2.new(1,0,0,40), BackgroundTransparency = 1})
             local bg = new("Frame", {Parent = sec, Size = UDim2.new(1,0,0,32), Position = UDim2.new(0,0,0,4), BackgroundColor3 = cfg.Theme.TabBg, BorderSizePixel = 0})
             new("UICorner", {Parent = bg, CornerRadius = UDim.new(0,8)})
             new("TextLabel", {Parent = bg, Text = title, Size = UDim2.new(1,-12,1,0), Position = UDim2.new(0,8,0,0), BackgroundTransparency = 1, Font = Enum.Font.SourceSansBold, TextSize = 17, TextColor3 = cfg.Theme.Text, TextXAlignment = Enum.TextXAlignment.Left})
@@ -593,11 +644,16 @@ end
             return sec
         end
 
-        -- CreateDropdown
-        function tab:CreateDropdown(label, options, callback)
-            options = options or {}
-            local frame = new("Frame", {Parent = self.Content, Size = UDim2.new(1,0,0,36), BackgroundTransparency = 1})
-            new("TextLabel", {Parent = frame, Text = label, Size = UDim2.new(0.65, -8, 1, 0), Position = UDim2.new(0,8,0,0), BackgroundTransparency = 1, TextColor3 = cfg.Theme.Text, Font = Enum.Font.SourceSansBold, TextSize = 17, TextXAlignment = Enum.TextXAlignment.Left})
+        function tab:CreateDropdown(opts)
+            opts = opts or {}
+            local name = opts.Name or ""
+            local options = opts.Options or opts.Choices or {}
+            local multiple = opts.MultipleOptions or false
+            local callback = opts.Callback
+            local flag = opts.Flag
+
+            local frame = new("Frame", {Parent = content, Size = UDim2.new(1,0,0,36), BackgroundTransparency = 1})
+            new("TextLabel", {Parent = frame, Text = name, Size = UDim2.new(0.65, -8, 1, 0), Position = UDim2.new(0,8,0,0), BackgroundTransparency = 1, TextColor3 = cfg.Theme.Text, Font = Enum.Font.SourceSansBold, TextSize = 17, TextXAlignment = Enum.TextXAlignment.Left})
             local btnWidthScale = 0.36
             local btn = new("TextButton", {Parent = frame, Size = UDim2.new(btnWidthScale, -8, 1, 0), Position = UDim2.new(1 - btnWidthScale, 4, 0, 0), BackgroundColor3 = cfg.Theme.Btn, Text = "Select", Font = Enum.Font.SourceSansBold, TextSize = 17, TextColor3 = cfg.Theme.Text, AutoButtonColor = false, TextScaled = false, TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center})
             new("UICorner", {Parent = btn, CornerRadius = UDim.new(0,8)})
@@ -672,14 +728,14 @@ end
                 panelStroke.Transparency = 0.8
                 panelStroke.Color = Color3.fromRGB(255,255,255)
 
-                local header = new("TextLabel", {Parent = panel, Size = UDim2.new(1,-12,0,headerH-4), Position = UDim2.new(0,6,0,6), BackgroundTransparency = 1, Font = Enum.Font.SourceSansBold, TextSize = 17, Text = label or "", TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Center, TextColor3 = cfg.Theme.Text, ZIndex = 221})
+                local header = new("TextLabel", {Parent = panel, Size = UDim2.new(1,-12,0,headerH-4), Position = UDim2.new(0,6,0,6), BackgroundTransparency = 1, Font = Enum.Font.SourceSansBold, TextSize = 17, Text = name or "", TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Center, TextColor3 = cfg.Theme.Text, ZIndex = 221})
 
                 contentFrame = new("ScrollingFrame", {Parent = panel, Size = UDim2.new(1,-12,0,panelH - headerH - 10), Position = UDim2.new(0,6,0, headerH), BackgroundTransparency = 1, ScrollBarThickness = 0, CanvasSize = UDim2.new(0,0,0, #options * itemH), VerticalScrollBarInset = Enum.ScrollBarInset.Always})
                 contentFrame.AutomaticCanvasSize = Enum.AutomaticSize.None
                 contentFrame.CanvasPosition = Vector2.new(0,0)
 
                 for i, opt in ipairs(options) do
-                    local row = new("TextButton", {Parent = contentFrame, Size = UDim2.new(1,0,0,itemH-6), Position = UDim2.new(0,0,0, (i-1)*itemH), BackgroundColor3 = cfg.Theme.TabBg, Text = tostring(opt), Font = Enum.Font.SourceSansBold, TextSize = 17, TextColor3 = darkTabText, AutoButtonColor = false, ZIndex = 222})
+                    local row = new("TextButton", {Parent = contentFrame, Size = UDim2.new(1,0,0,itemH-6), Position = UDim2.new(0,0,0, (i-1)*itemH), BackgroundColor3 = cfg.Theme.TabBg, Text = tostring(opt), Font = Enum.Font.SourceSansBold, TextSize = 17, TextColor3 = darkenColor(cfg.Theme.Text,0.18), AutoButtonColor = false, ZIndex = 222})
                     new("UICorner", {Parent = row, CornerRadius = UDim.new(0,6)})
                     row.TextStrokeTransparency = 1
 
@@ -699,18 +755,19 @@ end
                         if selectedIndex == i then
                             selectedIndex = nil
                             row.BackgroundColor3 = cfg.Theme.TabBg
-                            row.TextColor3 = darkTabText
+                            row.TextColor3 = darkenColor(cfg.Theme.Text,0.18)
                             if window and window._savedState and window._savedState.dropdownSelections then
                                 window._savedState.dropdownSelections[uid] = nil
                             end
                             if callback then pcall(callback, nil) end
                             btn.Text = "Select"
+                            if flag and window.Flags[flag] and window.Flags[flag].Set then window.Flags[flag].Set(nil) end
                             return
                         end
 
                         for _, child in ipairs(contentFrame:GetChildren()) do
                             if child:IsA("TextButton") then
-                                pcall(function() child.BackgroundColor3 = cfg.Theme.TabBg; child.TextColor3 = darkTabText end)
+                                pcall(function() child.BackgroundColor3 = cfg.Theme.TabBg; child.TextColor3 = darkenColor(cfg.Theme.Text,0.18) end)
                             end
                         end
 
@@ -722,26 +779,8 @@ end
                             window._savedState.dropdownSelections[uid] = i
                         end
                         if callback then pcall(callback, opt) end
+                        if flag and window.Flags[flag] and window.Flags[flag].Set then window.Flags[flag].Set(opt) end
                     end)
-                end
-
-                if window and window._savedState and window._savedState.dropdownSelections and window._savedState.dropdownSelections[uid] then
-                    local idx = window._savedState.dropdownSelections[uid]
-                    if idx and idx >= 1 and idx <= #options then
-                        local cnt = 0
-                        for _, child in ipairs(contentFrame:GetChildren()) do
-                            if child:IsA("TextButton") then
-                                cnt = cnt + 1
-                                if cnt == idx then
-                                    selectedIndex = idx
-                                    child.BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.14)
-                                    child.TextColor3 = Color3.fromRGB(255,255,255)
-                                    btn.Text = child.Text
-                                    break
-                                end
-                            end
-                        end
-                    end
                 end
 
                 updatePanelPos()
@@ -760,30 +799,6 @@ end
 
                 tween(panel, {BackgroundTransparency = 0, Position = UDim2.new(panel.Position.X.Scale, panel.Position.X.Offset, panel.Position.Y.Scale, panel.Position.Y.Offset + 8)}, 0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
                 tween(header, {TextTransparency = 0}, 0.18)
-                task.delay(0.06, function()
-                    for _, child in ipairs(contentFrame:GetDescendants()) do
-                        if child:IsA("TextLabel") or child:IsA("TextButton") or child:IsA("TextBox") then
-                            pcall(function() tween(child, {TextTransparency = 0}, 0.16) end)
-                        end
-                    end
-                end)
-
-                followConn = Frame:GetPropertyChangedSignal("AbsolutePosition"):Connect(updatePanelPos)
-                addConn(followConn)
-                local visConn = Frame:GetPropertyChangedSignal("Visible"):Connect(function()
-                    if not Frame.Visible then closePanel() end
-                end)
-                addConn(visConn)
-
-                escConn = UserInputService.InputBegan:Connect(function(input, gameProcessed)
-                    if gameProcessed then return end
-                    if input.KeyCode == Enum.KeyCode.Escape then
-                        closePanel()
-                    end
-                end)
-                addConn(escConn)
-
-                if instance and window and window._dropdownStates then window._dropdownStates[instance] = true end
             end
 
             local opening = false
@@ -795,8 +810,13 @@ end
                 opening = false
             end)
             addConn(openConn)
-            
-            instance = { UI = frame, Set = function(v) btn.Text = tostring(v) end, Open = showPanel, Close = closePanel, IsOpen = function() return (panel ~= nil) end, Button = btn, uid = uid }
+
+            instance = { UI = frame, Set = function(v) btn.Text = tostring(v) end, Open = showPanel, Close = closePanel, IsOpen = function() return (panel ~= nil) end, Button = btn, uid = uid, Flag = flag }
+
+            if flag and type(flag) == "string" then
+                registerFlag(flag, { Type = "Dropdown", Get = function() return btn.Text end, Set = function(v) btn.Text = tostring(v) end, UI = frame })
+            end
+
             if window then
                 window._dropdownInstances = window._dropdownInstances or {}
                 table.insert(window._dropdownInstances, instance)
@@ -811,121 +831,118 @@ end
             return instance
         end
 
-          -- CreateKeybind
-function tab:CreateKeybind(label, defaultKey, callback)
-    local row = new("Frame", {Parent = self.Content, Size = UDim2.new(1,0,0,36), BackgroundTransparency = 1})
-    local lbl = new("TextLabel", {Parent = row, Text = label or "Keybind", Size = UDim2.new(0.65, -8, 1, 0), Position = UDim2.new(0,8,0,0), BackgroundTransparency = 1, TextColor3 = cfg.Theme.Text, Font = Enum.Font.SourceSansBold, TextSize = 17, TextXAlignment = Enum.TextXAlignment.Left})
-    local btn = new("TextButton", {Parent = row, Size = UDim2.new(0.34, -8, 1, 0), Position = UDim2.new(0.66, 4, 0, 0), BackgroundColor3 = cfg.Theme.Btn, TextColor3 = cfg.Theme.Text, Text = "", Font = Enum.Font.SourceSansBold, TextSize = 17, AutoButtonColor=false, TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center})
-    new("UICorner", {Parent = btn, CornerRadius = UDim.new(0,8)})
+        function tab:CreateKeybind(opts)
+            opts = opts or {}
+            local label = opts.Name or "Keybind"
+            local defaultKey = opts.Default or opts.CurrentValue or opts.Key
+            local cb = opts.Callback
+            local flag = opts.Flag
 
-    addConn(btn.MouseEnter:Connect(function() if UserInputService.MouseEnabled then tween(btn, {BackgroundColor3 = brightenColor(cfg.Theme.Btn, 0.06)}, 0.10) end end))
-    addConn(btn.MouseLeave:Connect(function() tween(btn, {BackgroundColor3 = cfg.Theme.Btn}, 0.10) end))
+            local row = new("Frame", {Parent = content, Size = UDim2.new(1,0,0,36), BackgroundTransparency = 1})
+            new("TextLabel", {Parent = row, Text = label, Size = UDim2.new(0.65, -8, 1, 0), Position = UDim2.new(0,8,0,0), BackgroundTransparency = 1, TextColor3 = cfg.Theme.Text, Font = Enum.Font.SourceSansBold, TextSize = 17, TextXAlignment = Enum.TextXAlignment.Left})
+            local btn = new("TextButton", {Parent = row, Size = UDim2.new(0.34, -8, 1, 0), Position = UDim2.new(0.66, 4, 0, 0), BackgroundColor3 = cfg.Theme.Btn, TextColor3 = cfg.Theme.Text, Text = "", Font = Enum.Font.SourceSansBold, TextSize = 17, AutoButtonColor=false, TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center})
+            new("UICorner", {Parent = btn, CornerRadius = UDim.new(0,8)})
 
-    local function displayForKey(k)
-        if not k then
-            btn.Text = "..."
-            return
-        end
-        if typeof(k) == "EnumItem" and k.EnumType == Enum.KeyCode then
-            btn.Text = k.Name
-        elseif type(k) == "string" then
-            btn.Text = k
-        else
-            local ok, s = pcall(function() return tostring(k) end)
-            btn.Text = (ok and s) and s or "..."
-        end
-    end
-
-    local boundKey = nil
-    if defaultKey then
-        if typeof(defaultKey) == "EnumItem" and defaultKey.EnumType == Enum.KeyCode then
-            boundKey = defaultKey
-        elseif type(defaultKey) == "string" then
-            boundKey = defaultKey
-        end
-    end
-    displayForKey(boundKey)
-
-    local listening = false
-    local inputConn
-
-    local function stopListening()
-        if inputConn then
-            pcall(function() inputConn:Disconnect() end)
-            inputConn = nil
-        end
-        listening = false
-        tween(btn, {BackgroundColor3 = cfg.Theme.Btn}, 0.08)
-        displayForKey(boundKey)
-    end
-
-    local function startListening()
-        if listening then return end
-        listening = true
-        btn.Text = "..."
-        tween(btn, {BackgroundColor3 = brightenColor(cfg.Theme.Btn, 0.12)}, 0.06)
-
-        inputConn = UserInputService.InputBegan:Connect(function(input, gameProcessed)
-            if gameProcessed then return end
-            if input.KeyCode == Enum.KeyCode.Escape then
-                boundKey = nil
-                pcall(callback, nil)
-                stopListening()
-                return
+            local function displayForKey(k)
+                if not k then
+                    btn.Text = "..."
+                    return
+                end
+                if typeof(k) == "EnumItem" and k.EnumType == Enum.KeyCode then
+                    btn.Text = k.Name
+                elseif type(k) == "string" then
+                    btn.Text = k
+                else
+                    local ok, s = pcall(function() return tostring(k) end)
+                    btn.Text = (ok and s) and s or "..."
+                end
             end
 
-            if input.UserInputType == Enum.UserInputType.Keyboard then
-                boundKey = input.KeyCode
-                pcall(callback, boundKey)
-                stopListening()
-                return
-            end
-
-            if input.UserInputType ~= Enum.UserInputType.Keyboard then
-                local desc = tostring(input.UserInputType):gsub("Enum.UserInputType.","")
-                boundKey = desc
-                pcall(callback, boundKey)
-                stopListening()
-                return
-            end
-        end)
-    end
-
-    addConn(btn.MouseButton1Click:Connect(function()
-        if not listening then
-            startListening()
-        else
-            stopListening()
-        end
-    end))
-
-    addConn(btn.MouseButton2Click:Connect(function()
-        boundKey = nil
-        displayForKey(boundKey)
-        pcall(callback, nil)
-    end))
-
-    pcall(hideTextNodesIn, row)
-    task.defer(function() pcall(updateContentCanvas) end)
-
-    return {
-        UI = row,
-        Set = function(v)
-            if v == nil then boundKey = nil
-            elseif typeof(v) == "EnumItem" and v.EnumType == Enum.KeyCode then boundKey = v
-            elseif type(v) == "string" then boundKey = v
-            else boundKey = v
+            local boundKey = nil
+            if defaultKey then
+                if typeof(defaultKey) == "EnumItem" and defaultKey.EnumType == Enum.KeyCode then
+                    boundKey = defaultKey
+                elseif type(defaultKey) == "string" then
+                    boundKey = defaultKey
+                end
             end
             displayForKey(boundKey)
-        end,
-        Get = function() return boundKey end
-    }
-end
-        
-            -- CreateSlider
-        function tab:CreateSlider(label, minVal, maxVal, default, callback)
-            minVal = minVal or 0; maxVal = maxVal or 100; default = (default == nil) and minVal or default
-            local row = new("Frame", {Parent = self.Content, Size = UDim2.new(1,0,0,36), BackgroundTransparency = 1})
+
+            local listening = false
+            local inputConn
+
+            local function stopListening()
+                if inputConn then
+                    pcall(function() inputConn:Disconnect() end)
+                    inputConn = nil
+                end
+                listening = false
+                tween(btn, {BackgroundColor3 = cfg.Theme.Btn}, 0.08)
+                displayForKey(boundKey)
+            end
+
+            local function startListening()
+                if listening then return end
+                listening = true
+                btn.Text = "..."
+                tween(btn, {BackgroundColor3 = brightenColor(cfg.Theme.Btn, 0.12)}, 0.06)
+
+                inputConn = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+                    if gameProcessed then return end
+                    if input.KeyCode == Enum.KeyCode.Escape then
+                        boundKey = nil
+                        pcall(cb, nil)
+                        stopListening()
+                        return
+                    end
+
+                    if input.UserInputType == Enum.UserInputType.Keyboard then
+                        boundKey = input.KeyCode
+                        pcall(cb, boundKey)
+                        stopListening()
+                        return
+                    end
+
+                    if input.UserInputType ~= Enum.UserInputType.Keyboard then
+                        local desc = tostring(input.UserInputType):gsub("Enum.UserInputType.","")
+                        boundKey = desc
+                        pcall(cb, boundKey)
+                        stopListening()
+                        return
+                    end
+                end)
+            end
+
+            addConn(btn.MouseButton1Click:Connect(function()
+                if not listening then startListening() else stopListening() end
+            end))
+
+            addConn(btn.MouseButton2Click:Connect(function()
+                boundKey = nil
+                displayForKey(boundKey)
+                pcall(cb, nil)
+            end))
+
+            if flag and type(flag) == "string" then
+                registerFlag(flag, { Type = "Keybind", Get = function() return boundKey end, Set = function(v) boundKey = v; displayForKey(boundKey) end, UI = row })
+            end
+
+            pcall(hideTextNodesIn, row)
+            task.defer(function() pcall(updateContentCanvas) end)
+            return { UI = row, Set = function(v) if v == nil then boundKey = nil elseif typeof(v) == "EnumItem" and v.EnumType == Enum.KeyCode then boundKey = v elseif type(v) == "string" then boundKey = v else boundKey = v end displayForKey(boundKey) end, Get = function() return boundKey end, Flag = flag }
+        end
+
+        function tab:CreateSlider(opts)
+            opts = opts or {}
+            local label = opts.Name or ""
+            local minVal = tonumber((opts.Range and opts.Range[1]) or opts.Min) or opts.MinVal or 0
+            local maxVal = tonumber((opts.Range and opts.Range[2]) or opts.Max) or opts.MaxVal or 100
+            local default = (opts.CurrentValue ~= nil) and opts.CurrentValue or (opts.Default or minVal)
+            local cb = opts.Callback
+            local flag = opts.Flag
+
+            minVal = minVal or 0; maxVal = maxVal or 100; default = default or minVal
+            local row = new("Frame", {Parent = content, Size = UDim2.new(1,0,0,36), BackgroundTransparency = 1})
 
             local leftArea = new("Frame", {Parent = row, Size = UDim2.new(0.65, -8, 1, 0), Position = UDim2.new(0,8,0,0), BackgroundTransparency = 1})
             local trackHeight = 28
@@ -951,7 +968,7 @@ end
                 ZIndex = 3,
                 RichText = true,
             })
-            leftLabel.Text = ""
+            leftLabel.Text = label
 
             local rightBoxScale = 0.30
             local rightBox = new("Frame", {Parent = row, Size = UDim2.new(rightBoxScale, -8, 0, trackHeight), Position = UDim2.new(1 - rightBoxScale, 4, 0.5, -trackHeight/2), BackgroundColor3 = cfg.Theme.TabBg, BorderSizePixel = 0})
@@ -959,83 +976,20 @@ end
             local valueLabel = new("TextLabel", {Parent = rightBox, Size = UDim2.new(1, -12, 1, 0), Position = UDim2.new(0,6,0,0), BackgroundTransparency = 1, Font = leftLabel.Font, TextSize = leftLabel.TextSize, TextColor3 = cfg.Theme.Text, TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center})
             valueLabel.Text = tostring(default)
 
-            local function countCharsFit(fullText, font, textSize, targetPixel)
-                local lo, hi = 0, #fullText
-                while lo < hi do
-                    local mid = math.ceil((lo + hi + 1) / 2)
-                    local ok, size = pcall(function()
-                        return TextService:GetTextSize(string.sub(fullText, 1, mid), textSize, font, Vector2.new(10000, 10000)).X
-                    end)
-                    local w = 0
-                    if ok and size then w = size end
-                    if w <= targetPixel then
-                        lo = mid
-                    else
-                        hi = mid - 1
-                    end
-                end
-                return lo
-            end
-
-            local function makeRichText(fullText, splitIndex)
-                fullText = fullText or ""
-                local escFull = escapeHtml(fullText)
-                local colorCovered = color3ToHex(cfg.Theme.Main or Color3.new(0,0,0))
-                local colorUncovered = color3ToHex(cfg.Theme.Text or Color3.new(1,1,1))
-                if splitIndex <= 0 then
-                    return string.format("<font color=\"%s\">%s</font>", colorUncovered, escFull)
-                elseif splitIndex >= #fullText then
-                    return string.format("<font color=\"%s\">%s</font>", colorCovered, escFull)
-                else
-                    local left = string.sub(fullText, 1, splitIndex)
-                    local right = string.sub(fullText, splitIndex + 1)
-                    left = escapeHtml(left)
-                    right = escapeHtml(right)
-                    return string.format("<font color=\"%s\">%s</font><font color=\"%s\">%s</font>", colorCovered, left, colorUncovered, right)
-                end
-            end
-
-            local range = maxVal - minVal
             local function setFromPercent(p, skipTween)
                 p = clampVal(p, 0, 1)
                 local value = minVal + (maxVal - minVal) * p
                 local displayValue = (math.floor(value*100 + 0.5)/100)
-
-                local textStr = tostring(label or "")
-
-                local trackW = math.max(1, track.AbsoluteSize.X)
-                local usableWidth = trackW - (textPadding * 2)
-                local fillPixel = math.floor(usableWidth * p + 0.5)
-
-                local coveredChars = 0
-                if #textStr > 0 and fillPixel > 0 then
-                    coveredChars = countCharsFit(textStr, leftLabel.Font, leftLabel.TextSize, fillPixel)
-                else
-                    coveredChars = 0
-                end
-
-                local rich = makeRichText(textStr, coveredChars)
-                pcall(function() leftLabel.Text = rich end)
-
-                local targetFill = UDim2.new(p, 0, 1, 0)
-                if not skipTween then
-                    tween(fill, {Size = targetFill}, 0.12, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
-                else
-                    fill.Size = targetFill
-                end
-
+                if not skipTween then tween(fill, {Size = UDim2.new(p,0,1,0)}, 0.12) else fill.Size = UDim2.new(p,0,1,0) end
                 pcall(function() valueLabel.Text = tostring(displayValue) end)
-
-                if callback then pcall(callback, value) end
+                if cb then pcall(cb, value) end
+                if flag and window.Flags[flag] and window.Flags[flag].Set then pcall(window.Flags[flag].Set, value) end
             end
 
             local defaultPct = 0
+            local range = maxVal - minVal
             if range == 0 then defaultPct = 0 else defaultPct = (default - minVal) / range end
-
-            task.defer(function()
-                RunService.Heartbeat:Wait()
-                setFromPercent(defaultPct, true)
-            end)
+            task.defer(function() RunService.Heartbeat:Wait(); setFromPercent(defaultPct, true) end)
 
             local dragging = false
             local inputChangedConn
@@ -1076,6 +1030,16 @@ end
                 end
             end))
 
+            if flag and type(flag) == "string" then
+                registerFlag(flag, { Type = "Slider", Get = function()
+                    local curPct = fill.Size.X.Scale
+                    return minVal + (maxVal - minVal) * curPct
+                end, Set = function(v)
+                    local r = maxVal - minVal
+                    if r == 0 then setFromPercent(0, true) else setFromPercent((v - minVal) / r, false) end
+                end, UI = row })
+            end
+
             pcall(hideTextNodesIn, row)
             task.defer(function() pcall(updateContentCanvas) end)
 
@@ -1088,7 +1052,8 @@ end
                 Get = function()
                     local curPct = fill.Size.X.Scale
                     return minVal + (maxVal - minVal) * curPct
-                end
+                end,
+                Flag = flag
             }
         end
 
@@ -1114,7 +1079,7 @@ end
 
             tween(tab.Button, {BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.14)}, 0.14)
             tab.Button.TextColor3 = Color3.fromRGB(255,255,255)
-            ensureTabVisible(tab.Button)
+            ensureTabVisible = ensureTabVisible or function() end
             pcall(function() if window then window._activeTabIndex = idx; window._savedState.active = idx end end)
         end))
 
@@ -1170,16 +1135,11 @@ end
     makeDraggable(InfoBar)
     makeDraggable(HwanBtn)
 
-    -- Attach window properties
-    window.Root = screenGui
-    window.Main = Frame
-    window._config = cfg
     window._dropdownInstances = window._dropdownInstances or {}
     window._dropdownStates = window._dropdownStates or {}
     window._activeTabIndex = window._activeTabIndex or 1
     window._savedState = window._savedState or { active = nil, dropdowns = {}, dropdownSelections = {} }
 
-    -- render updates (info text)
     local pingSamples = {}
     local maxPingSamples = 30
     local pingTimer = 0
@@ -1220,12 +1180,15 @@ end
         local cvPercent = 0
         if mean > 0 then cvPercent = math.floor((std / mean) * 100 + 0.5) end
 
-        InfoText.Text = string.format("TIME : %s   |   FPS: %d   |   PING: %d ms (%d%%CV)", timeStr, fps, pingMs, cvPercent)
+        if refs.InfoText then
+            refs.InfoText.Text = string.format("TIME : %s   |   FPS: %d   |   PING: %d ms (%d%%CV)", timeStr, fps, pingMs, cvPercent)
+        end
     end))
 
-    -- Notifications
-    local finalSize = UDim2.new(0, cfg.Width, 0, cfg.Height)
+    local notifQueue = {}
+    local notifShowing = false
     local defaultNotifDuration = 1.5
+
     local function processNextNotification()
         if notifShowing then return end
         local item = table.remove(notifQueue, 1)
@@ -1264,7 +1227,6 @@ end
         local body = new("TextLabel", {Parent = inner, Size = UDim2.new(1,0,0,bodyH), Position = UDim2.new(0,0,0,headerSize), BackgroundTransparency = 1, Font = bodyFont, TextSize = bodySize, Text = text, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, TextColor3 = cfg.Theme.Text, ZIndex = 222, TextWrapped = true})
         body.AutomaticSize = Enum.AutomaticSize.None
 
-        -- animate in
         notif.BackgroundTransparency = 1
         header.TextTransparency = 1
         body.TextTransparency = 1
@@ -1288,133 +1250,213 @@ end
         processNextNotification()
     end
 
-    -- Key UI
+    local finalSize = UDim2.new(0, cfg.Width, 0, cfg.Height)
+
+    -- Config saving/loading
+    local function configFileName()
+        local cfgs = cfg.ConfigurationSaving or {}
+        local fname = cfgs.FileName or cfg.Title or "HwanConfig"
+        if cfgs.FolderName and cfgs.FolderName ~= "" then
+            return (cfgs.FolderName .. "/" .. fname .. ".json")
+        end
+        return (fname .. ".json")
+    end
+
+    local function saveConfig()
+        if not cfg.ConfigurationSaving or not cfg.ConfigurationSaving.Enabled then return end
+        local out = {}
+        for flagName, meta in pairs(window.Flags) do
+            local ok, val = pcall(function()
+                if type(meta.Get) == "function" then
+                    return meta.Get()
+                end
+                return meta.Value
+            end)
+            if ok and val ~= nil then
+                if typeof(val) == "EnumItem" and val.EnumType == Enum.KeyCode then
+                    out[flagName] = { __enum = "KeyCode", name = val.Name }
+                elseif typeof(val) == "Color3" then
+                    out[flagName] = { __color = color3ToHex(val) }
+                else
+                    out[flagName] = val
+                end
+            end
+        end
+        local ok, encoded = pcall(function() return HttpService:JSONEncode(out) end)
+        if ok and encoded then
+            writeFileSafe(configFileName(), encoded)
+        end
+    end
+
+    local function loadConfig()
+        if not cfg.ConfigurationSaving or not cfg.ConfigurationSaving.Enabled then return end
+        local s = readFileSafe(configFileName())
+        if not s then return end
+        local ok, decoded = pcall(function() return HttpService:JSONDecode(s) end)
+        if not ok or type(decoded) ~= "table" then return end
+        for flagName, val in pairs(decoded) do
+            local meta = window.Flags[flagName]
+            if meta and type(meta.Set) == "function" then
+                if type(val) == "table" and val.__enum == "KeyCode" and val.name then
+                    local enumVal = Enum.KeyCode:FindFirstChild(val.name) or Enum.KeyCode[val.name]
+                    pcall(meta.Set, enumVal)
+                elseif type(val) == "table" and val.__color and type(val.__color) == "string" then
+                    local hex = val.__color:gsub("#","")
+                    if #hex == 6 then
+                        local r = tonumber(hex:sub(1,2),16)/255
+                        local g = tonumber(hex:sub(3,4),16)/255
+                        local b = tonumber(hex:sub(5,6),16)/255
+                        pcall(meta.Set, Color3.new(r,g,b))
+                    end
+                else
+                    pcall(meta.Set, val)
+                end
+            end
+        end
+    end
+
+    -- Key UI (enhanced, supports multiple keys, remote fetch, save)
     local function createKeyUI(onAuth)
-        local kFrame = new("Frame", {Parent = screenGui, Name = "KeyPrompt", Size = UDim2.new(0, 460, 0, 140), Position = UDim2.new(0.5, -230, 0.38, -70), BackgroundColor3 = cfg.Theme.Main, BorderSizePixel = 0, ZIndex = 300, Active = true})
+        local ks = cfg.KeySettings or {}
+        ks.Title = ks.Title or (cfg.Title .. " | Key System")
+        ks.FileName = ks.FileName or (cfg.Title .. "_key.txt")
+        ks.SaveKey = (ks.SaveKey == true)
+        ks.GrabKeyFromSite = (ks.GrabKeyFromSite == true)
+        ks.Key = ks.Key or {}
+
+        local allowed = {}
+        local function addAllowed(k)
+            if not k then return end
+            k = tostring(k):gsub("^%s*(.-)%s*$","%1")
+            if k ~= "" then allowed[k] = true end
+        end
+
+        local function fetchKeysFromUrl(url)
+            if not url or type(url) ~= "string" then return end
+            local ok, res = pcall(function() return game:HttpGet(url) end)
+            if not ok or not res then return end
+            for line in res:gmatch("[^\r\n]+") do
+                local t = line:gsub("^%s*(.-)%s*$","%1")
+                if t ~= "" then allowed[t] = true end
+            end
+        end
+
+        for _, v in ipairs(ks.Key) do
+            if type(v) == "string" and v:match("^https?://") then
+                if ks.GrabKeyFromSite then
+                    pcall(fetchKeysFromUrl, v)
+                else
+                    addAllowed(v)
+                end
+            else
+                addAllowed(v)
+            end
+        end
+        if ks.KeyUrl and type(ks.KeyUrl) == "string" then
+            if ks.GrabKeyFromSite then pcall(fetchKeysFromUrl, ks.KeyUrl) else addAllowed(ks.KeyUrl) end
+        end
+
+        local savedKey = nil
+        if ks.SaveKey then
+            local raw = readFileSafe(ks.FileName)
+            if raw then
+                savedKey = tostring(raw):gsub("^%s*(.-)%s*$","%1")
+                if savedKey ~= "" and allowed[savedKey] then
+                    showNotification("Valid saved key found. Access granted.")
+                    onAuth()
+                    return
+                end
+            end
+        end
+
+        local kFrame = new("Frame", {Parent = screenGui, Name = "KeyPrompt", Size = UDim2.new(0, 520, 0, 160), Position = UDim2.new(0.5, -260, 0.38, -80), BackgroundColor3 = cfg.Theme.Main, BorderSizePixel = 0, ZIndex = 300, Active = true})
         new("UICorner", {Parent = kFrame, CornerRadius = UDim.new(0,10)})
         local kStroke = new("UIStroke", {Parent = kFrame})
         kStroke.Thickness = 2
         kStroke.Transparency = 0.8
         kStroke.Color = Color3.fromRGB(255,255,255)
 
-        local titleLbl = new("TextLabel", {Parent = kFrame, Size = UDim2.new(1, -20, 0, 30), Position = UDim2.new(0,10,0,8), BackgroundTransparency = 1, Font = Enum.Font.FredokaOne, TextSize = 18, Text = cfg.Title .. " | Key System", TextColor3 = cfg.Theme.Accent, TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 305})
-        local inputBox = new("TextBox", {Parent = kFrame, Size = UDim2.new(1, -40, 0, 36), Position = UDim2.new(0,20,0,48), PlaceholderText = "Enter your key here!", Font = Enum.Font.SourceSans, TextSize = 18, Text = "", ClearTextOnFocus = false, BackgroundColor3 = Color3.fromRGB(60,60,60), TextColor3 = cfg.Theme.Text, BorderSizePixel = 0, ZIndex = 305})
+        local titleLbl = new("TextLabel", {Parent = kFrame, Size = UDim2.new(1, -20, 0, 30), Position = UDim2.new(0,10,0,8), BackgroundTransparency = 1, Font = Enum.Font.FredokaOne, TextSize = 18, Text = ks.Title, TextColor3 = cfg.Theme.Accent, TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 305})
+        local inputBox = new("TextBox", {Parent = kFrame, Size = UDim2.new(1, -40, 0, 40), Position = UDim2.new(0,20,0,48), PlaceholderText = "Enter your key here!", Font = Enum.Font.SourceSans, TextSize = 18, Text = "", ClearTextOnFocus = false, BackgroundColor3 = Color3.fromRGB(60,60,60), TextColor3 = cfg.Theme.Text, BorderSizePixel = 0, ZIndex = 305})
         new("UICorner", {Parent = inputBox, CornerRadius = UDim.new(0,6)})
         new("UIPadding", {Parent = inputBox, PaddingLeft = UDim.new(0,12), PaddingRight = UDim.new(0,10)})
 
-        local getBtn = new("TextButton", {Parent = kFrame, Size = UDim2.new(0,120,0,36), Position = UDim2.new(0.5, -130, 0, 96), BackgroundColor3 = cfg.Theme.Btn, Font = Enum.Font.FredokaOne, TextSize = 16, Text = "Get key", TextColor3 = cfg.Theme.Text, ZIndex = 305})
+        local getBtn = new("TextButton", {Parent = kFrame, Size = UDim2.new(0,140,0,36), Position = UDim2.new(0.5, -170, 0, 100), BackgroundColor3 = cfg.Theme.Btn, Font = Enum.Font.FredokaOne, TextSize = 16, Text = "Get key", TextColor3 = cfg.Theme.Text, ZIndex = 305})
         new("UICorner", {Parent = getBtn, CornerRadius = UDim.new(0,6)})
-        local checkBtn = new("TextButton", {Parent = kFrame, Size = UDim2.new(0,120,0,36), Position = UDim2.new(0.5, 10, 0, 96), BackgroundColor3 = cfg.Theme.Btn, Font = Enum.Font.FredokaOne, TextSize = 16, Text = "Check Key", TextColor3 = cfg.Theme.Text, ZIndex = 305})
+        local checkBtn = new("TextButton", {Parent = kFrame, Size = UDim2.new(0,140,0,36), Position = UDim2.new(0.5, -10, 0, 100), BackgroundColor3 = cfg.Theme.Btn, Font = Enum.Font.FredokaOne, TextSize = 16, Text = "Check Key", TextColor3 = cfg.Theme.Text, ZIndex = 305})
         new("UICorner", {Parent = checkBtn, CornerRadius = UDim.new(0,6)})
         local msg = new("TextLabel", {Parent = kFrame, Size = UDim2.new(1, -20, 0, 18), Position = UDim2.new(0,10,1, -22), BackgroundTransparency = 1, Font = Enum.Font.SourceSans, TextSize = 14, Text = "", TextColor3 = Color3.fromRGB(200,200,200), TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 305})
 
+        local function setMsg(s, color)
+            pcall(function()
+                msg.Text = tostring(s or "")
+                if color then msg.TextColor3 = color end
+            end)
+        end
+
         local function tryKey(key)
-            if key and type(key) == "string" and string.lower(key) == string.lower(cfg.AccessKey or "") then
-                showNotification("Valid Key!")
+            if not key then setMsg("No key provided."); showNotification("Invalid Key!"); return false end
+            key = tostring(key):gsub("^%s*(.-)%s*$","%1")
+            if next(allowed) == nil and ks.GrabKeyFromSite then
+                for _, v in ipairs(ks.Key or {}) do
+                    if type(v) == "string" and v:match("^https?://") then pcall(fetchKeysFromUrl, v) end
+                end
+                if ks.KeyUrl and ks.KeyUrl:match("^https?://") then pcall(fetchKeysFromUrl, ks.KeyUrl) end
+            end
+
+            if allowed[key] then
+                if ks.SaveKey then
+                    pcall(function() writeFileSafe(ks.FileName, key) end)
+                end
+                showNotification("Valid Key! Access granted.")
                 onAuth()
                 safeDestroy(kFrame)
-            else
-                showNotification("Invalid Key!")
-                pcall(function() inputBox.Text = "" end)
+                return true
             end
+
+            if next(allowed) == nil and #ks.Key == 1 and ks.Key[1] == key then
+                if ks.SaveKey then pcall(function() writeFileSafe(ks.FileName, key) end) end
+                showNotification("Valid Key! Access granted.")
+                onAuth()
+                safeDestroy(kFrame)
+                return true
+            end
+
+            setMsg("Invalid key. Make sure you entered correct key.", Color3.fromRGB(220,80,80))
+            showNotification("Invalid Key!")
+            pcall(function() inputBox.Text = "" end)
+            return false
         end
 
         addConn(checkBtn.MouseButton1Click:Connect(function() tryKey(inputBox.Text) end))
-        addConn(getBtn.MouseButton1Click:Connect(function()
-            pcall(function()
-                if cfg.KeyUrl and setclipboard then
-                    setclipboard(cfg.KeyUrl)
-                elseif setclipboard then
-                    setclipboard("https://facebook.com/hwanthichhat")
-                end
-            end)
-            showNotification("Copied to clipboard!")
-        end))
         addConn(inputBox.FocusLost:Connect(function(enter) if enter then tryKey(inputBox.Text) end end))
 
-        makeDraggable(kFrame)
-    end
-
-    local function applyTheme(theme)
-        for kk, vv in pairs(theme) do cfg.Theme[kk] = vv end
-        if refs.Frame then refs.Frame.BackgroundColor3 = cfg.Theme.Main end
-        if refs.Divider0 then refs.Divider0.BackgroundColor3 = cfg.Theme.TabBg end
-        if refs.InfoBar then refs.InfoBar.BackgroundColor3 = cfg.Theme.InfoBg end
-        if refs.InfoText then refs.InfoText.TextColor3 = cfg.Theme.Text end
-        if refs.HwanBtn then refs.HwanBtn.BackgroundColor3 = cfg.Theme.InfoInner end
-        if refs.HwanInner then refs.HwanInner.BackgroundColor3 = cfg.Theme.InfoInner end
-        if refs.TitleMain then refs.TitleMain.TextColor3 = cfg.Theme.Accent end
-        for _, t in ipairs(tabList) do
-            if t.Button then t.Button.BackgroundColor3 = cfg.Theme.TabBg; t.Button.TextColor3 = darkenColor(cfg.Theme.Text, 0.18) end
-            if t.Content then
-                for _, child in ipairs(t.Content:GetDescendants()) do
-                    if child:IsA("TextLabel") or child:IsA("TextButton") or child:IsA("TextBox") then
-                        pcall(function() child.TextColor3 = cfg.Theme.Text end)
-                    end
+        addConn(getBtn.MouseButton1Click:Connect(function()
+            local copied = false
+            if ks.KeyUrl and type(ks.KeyUrl) == "string" and setclipboard then pcall(setclipboard, ks.KeyUrl); copied = true end
+            if not copied then
+                for _, v in ipairs(ks.Key) do
+                    if type(v) == "string" and v:match("^https?://") and setclipboard then pcall(setclipboard, v); copied = true; break end
                 end
             end
+            if not copied and setclipboard then pcall(setclipboard, "No key URL provided.") end
+            showNotification(copied and "Copied to clipboard!" or "No URL to copy.")
+        end))
+
+        makeDraggable(kFrame)
+
+        if savedKey and savedKey ~= "" then
+            setMsg("Found saved key. Verifying...")
+            task.defer(function()
+                task.wait(0.05)
+                if tryKey(savedKey) then return end
+                setMsg("", Color3.fromRGB(200,200,200))
+            end)
         end
     end
 
-    function window:CreateTab(name) return createTab(name) end
-    function window:Notify(text, duration) showNotification(text, duration) end
-    function window:Center() Frame.Position = UDim2.new(0, 16, 0.5, -cfg.Height/2) end
-    function window:SetVisible(v) toggleVisible(v) end
-    function window:SetVisibleImmediate(v) Frame.Visible = v end
-    function window:SetTheme(newTheme) if type(newTheme) == "table" then applyTheme(newTheme) end end
-
-    function window:Destroy()
-        -- close dropdowns explicitly
-        for _, inst in ipairs(window._dropdownInstances or {}) do
-            pcall(function() if inst and inst.Close then inst.Close() end end)
-        end
-        for i = #conns, 1, -1 do
-            local c = conns[i]
-            pcall(function()
-                if c and c.Disconnect then c:Disconnect()
-                elseif c and c.disconnect then c:disconnect()
-                end
-            end)
-            conns[i] = nil
-        end
-
-        pcall(function() if screenGui and screenGui.Parent then screenGui:Destroy() end end)
-
-        if _G.HwanHubData and _G.HwanHubData.screenGui == screenGui then
-            _G.HwanHubData = nil
-        end
-
-        conns = nil
-        notifQueue = nil
-        notifShowing = nil
-        pages = nil
-        tabList = nil
-    end
-
-    _G.HwanHubData = { screenGui = screenGui, conns = conns, auth = false }
-
-    task.spawn(function()
-        if cfg.KeySystem then
-            Frame.Visible = false
-            HwanBtn.Visible = false
-            createKeyUI(function()
-                _G.HwanHubData.auth = true
-                Frame.Visible = true
-                HwanBtn.Visible = (cfg.ShowToggleIcon ~= false)
-                tween(Frame, {Size = finalSize}, 0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-                showNotification("Welcome to " .. (cfg.Title or "Hwan Hub"))
-            end)
-        else
-            _G.HwanHubData.auth = true
-            Frame.Visible = true
-            HwanBtn.Visible = (cfg.ShowToggleIcon ~= false)
-            task.wait(0.06)
-            tween(Frame, {Size = finalSize}, 0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-        end
-    end)
-
+    -- capture original UI properties for show/hide animations
     local _origUI = {}
-
     local function captureOriginalProperties()
         for _, d in ipairs(Frame:GetDescendants()) do
             pcall(function()
@@ -1489,83 +1531,80 @@ end
 
     captureOriginalProperties()
 
-local animCounter = 0
-local visible = true
-local function toggleVisible(newV)
-    animCounter = animCounter + 1
-    local token = animCounter
+    local animCounter = 0
+    local visible = true
+    local function toggleVisible(newV)
+        animCounter = animCounter + 1
+        local token = animCounter
 
-    visible = newV == nil and not visible or newV
-    local animDur = 0.28
-    local fadeDur = 0.12
-
-    -- đóng tất cả dropdown trước khi đổi trạng thái
-    for i,inst in ipairs(window._dropdownInstances or {}) do
-        pcall(function() if inst and inst.Close then inst.Close() end end)
-    end
-
-    if visible then
-        -- show
-        Frame.ClipsDescendants = true
-        Frame.Visible = true
-        Frame.Size = UDim2.new(0, cfg.Width, 0, 0)
-
-        captureOriginalProperties()
-        setAllTransparency(1, 0)
-
-        tween(Frame, {Size = UDim2.new(0, cfg.Width, 0, cfg.Height)}, animDur, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-
-        pcall(function()
-            tween(HwanInner, {Size = UDim2.new(1,-6,1,-6)}, 0.12)
-            task.wait(0.12)
-            tween(HwanInner, {Size = UDim2.new(1,-8,1,-8)}, 0.12)
-        end)
-
-        task.delay(animDur * 0.9, function()
-            if token ~= animCounter then return end
-            for d, vals in pairs(_origUI) do
-                if token ~= animCounter then break end
-                if d and d.Parent then
-                    pcall(function()
-                        if vals.TextTransparency ~= nil and (d.TextTransparency ~= nil) then tweenToTransparency(d, {TextTransparency = vals.TextTransparency}, 0.18) end
-                        if vals.BackgroundTransparency ~= nil and (d.BackgroundTransparency ~= nil) then tweenToTransparency(d, {BackgroundTransparency = vals.BackgroundTransparency}, 0.18) end
-                        if vals.StrokeTransparency ~= nil and d:IsA("UIStroke") then tweenToTransparency(d, {Transparency = vals.StrokeTransparency}, 0.18) end
-                        if vals.ImageTransparency ~= nil and (d.ImageTransparency ~= nil) then tweenToTransparency(d, {ImageTransparency = vals.ImageTransparency}, 0.18) end
-                    end)
-                else
-                    _origUI[d] = nil
-                end
-            end
-            task.delay(0.18 + 0.02, function()
-                if token ~= animCounter then return end
-                pcall(function() Frame.ClipsDescendants = false end)
-            end)
-        end)
-    else
-        -- hide
-        captureOriginalProperties()
-        setAllTransparency(1, fadeDur)
+        visible = newV == nil and not visible or newV
+        local animDur = 0.28
+        local fadeDur = 0.12
 
         for i,inst in ipairs(window._dropdownInstances or {}) do
             pcall(function() if inst and inst.Close then inst.Close() end end)
         end
 
-        Frame.ClipsDescendants = true
-        task.delay(fadeDur + 0.02, function()
-            if token ~= animCounter then return end
-            tween(Frame, {Size = UDim2.new(0, cfg.Width, 0, 0)}, animDur, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+        if visible then
+            Frame.ClipsDescendants = true
+            Frame.Visible = true
+            Frame.Size = UDim2.new(0, cfg.Width, 0, 0)
+
+            captureOriginalProperties()
+            setAllTransparency(1, 0)
+
+            tween(Frame, {Size = UDim2.new(0, cfg.Width, 0, cfg.Height)}, animDur, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+
             pcall(function()
                 tween(HwanInner, {Size = UDim2.new(1,-6,1,-6)}, 0.12)
                 task.wait(0.12)
                 tween(HwanInner, {Size = UDim2.new(1,-8,1,-8)}, 0.12)
             end)
-            task.delay(animDur + 0.02, function()
+
+            task.delay(animDur * 0.9, function()
                 if token ~= animCounter then return end
-                pcall(function() Frame.Visible = false; Frame.ClipsDescendants = false end)
+                for d, vals in pairs(_origUI) do
+                    if token ~= animCounter then break end
+                    if d and d.Parent then
+                        pcall(function()
+                            if vals.TextTransparency ~= nil and (d.TextTransparency ~= nil) then tweenToTransparency(d, {TextTransparency = vals.TextTransparency}, 0.18) end
+                            if vals.BackgroundTransparency ~= nil and (d.BackgroundTransparency ~= nil) then tweenToTransparency(d, {BackgroundTransparency = vals.BackgroundTransparency}, 0.18) end
+                            if vals.StrokeTransparency ~= nil and d:IsA("UIStroke") then tweenToTransparency(d, {Transparency = vals.StrokeTransparency}, 0.18) end
+                            if vals.ImageTransparency ~= nil and (d.ImageTransparency ~= nil) then tweenToTransparency(d, {ImageTransparency = vals.ImageTransparency}, 0.18) end
+                        end)
+                    else
+                        _origUI[d] = nil
+                    end
+                end
+                task.delay(0.18 + 0.02, function()
+                    if token ~= animCounter then return end
+                    pcall(function() Frame.ClipsDescendants = false end)
+                end)
             end)
-        end)
+        else
+            captureOriginalProperties()
+            setAllTransparency(1, fadeDur)
+
+            for i,inst in ipairs(window._dropdownInstances or {}) do
+                pcall(function() if inst and inst.Close then inst.Close() end end)
+            end
+
+            Frame.ClipsDescendants = true
+            task.delay(fadeDur + 0.02, function()
+                if token ~= animCounter then return end
+                tween(Frame, {Size = UDim2.new(0, cfg.Width, 0, 0)}, animDur, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+                pcall(function()
+                    tween(HwanInner, {Size = UDim2.new(1,-6,1,-6)}, 0.12)
+                    task.wait(0.12)
+                    tween(HwanInner, {Size = UDim2.new(1,-8,1,-8)}, 0.12)
+                end)
+                task.delay(animDur + 0.02, function()
+                    if token ~= animCounter then return end
+                    pcall(function() Frame.Visible = false; Frame.ClipsDescendants = false end)
+                end)
+            end)
+        end
     end
-end
 
     addConn(HwanBtn.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
@@ -1577,12 +1616,11 @@ end
         local keycode = cfg.ToggleKey or Enum.KeyCode.LeftAlt
         if gameProcessed then return end
         if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == keycode then
-            if cfg.KeySystem and (not (_G.HwanHubData and _G.HwanHubData.auth)) then return end
+            if cfg.KeySystem and (not (_G.Hwan and _G.Hwan.auth)) then return end
             toggleVisible()
         end
     end))
 
-    -- Anti-AFK
     pcall(function()
         local vu = game:GetService("VirtualUser")
         if LocalPlayer and LocalPlayer.Idled then
@@ -1598,7 +1636,105 @@ end
         end
     end)
 
+    -- expose API
+    function window:CreateTab(name) return createTab(name) end
+    function window:Notify(tblOrText)
+        if type(tblOrText) == "table" then
+            showNotification(tblOrText.Content or tblOrText.Message or tblOrText.Text or "", tblOrText.Duration)
+        else
+            showNotification(tblOrText, nil)
+        end
+    end
+    function window:SetTheme(newTheme)
+        if type(newTheme) == "string" then
+            if THEMES[newTheme] then
+                for kk,vv in pairs(THEMES[newTheme]) do cfg.Theme[kk] = vv end
+            end
+        elseif type(newTheme) == "table" then
+            for kk,vv in pairs(newTheme) do cfg.Theme[kk] = vv end
+        end
+        -- apply to refs
+        if refs.Frame then refs.Frame.BackgroundColor3 = cfg.Theme.Main end
+        if refs.Divider0 then refs.Divider0.BackgroundColor3 = cfg.Theme.TabBg end
+        if refs.InfoBar then refs.InfoBar.BackgroundColor3 = cfg.Theme.InfoBg end
+        if refs.InfoText then refs.InfoText.TextColor3 = cfg.Theme.Text end
+        if refs.HwanBtn then refs.HwanBtn.BackgroundColor3 = cfg.Theme.InfoInner end
+        if refs.HwanInner then refs.HwanInner.BackgroundColor3 = cfg.Theme.InfoInner end
+        if refs.TitleMain then refs.TitleMain.TextColor3 = cfg.Theme.Accent end
+        for _, t in ipairs(tabList) do
+            if t.Button then t.Button.BackgroundColor3 = cfg.Theme.TabBg; t.Button.TextColor3 = darkenColor(cfg.Theme.Text, 0.18) end
+            if t.Content then
+                for _, child in ipairs(t.Content:GetDescendants()) do
+                    if child:IsA("TextLabel") or child:IsA("TextButton") or child:IsA("TextBox") then
+                        pcall(function() child.TextColor3 = cfg.Theme.Text end)
+                    end
+                end
+            end
+        end
+    end
+    function window:GetFlag(name) return window.Flags[name] end
+    function window:SetFlag(name, val) if window.Flags[name] and window.Flags[name].Set then window.Flags[name].Set(val) else window.Flags[name] = { Value = val } end end
+    function window:SaveConfiguration() saveConfig() end
+    function window:LoadConfiguration() loadConfig() end
+
+    local oldDestroy
+    oldDestroy = function()
+        for _, inst in ipairs(window._dropdownInstances or {}) do
+            pcall(function() if inst and inst.Close then inst.Close() end end)
+        end
+        for i = #conns, 1, -1 do
+            local c = conns[i]
+            pcall(function()
+                if c and c.Disconnect then c:Disconnect()
+                elseif c and c.disconnect then c:disconnect()
+                end
+            end)
+            conns[i] = nil
+        end
+
+        pcall(function() if screenGui and screenGui.Parent then screenGui:Destroy() end end)
+
+        if _G.Hwan and _G.Hwan.screenGui == screenGui then
+            _G.Hwan = nil
+        end
+
+        conns = nil
+        notifQueue = nil
+        notifShowing = nil
+        pcall(saveConfig)
+    end
+
+    function window:Destroy()
+        oldDestroy()
+    end
+
+    _G.Hwan = { screenGui = screenGui, conns = conns, auth = false }
+
+    task.spawn(function()
+        if cfg.KeySystem then
+            Frame.Visible = false
+            HwanBtn.Visible = false
+            createKeyUI(function()
+                _G.Hwan.auth = true
+                Frame.Visible = true
+                HwanBtn.Visible = (cfg.ShowToggleIcon ~= false)
+                tween(Frame, {Size = finalSize}, 0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+                showNotification("Welcome to " .. (cfg.Title or "Hwan Hub"))
+            end)
+        else
+            _G.Hwan.auth = true
+            Frame.Visible = true
+            HwanBtn.Visible = (cfg.ShowToggleIcon ~= false)
+            task.wait(0.06)
+            tween(Frame, {Size = finalSize}, 0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+        end
+    end)
+
+    task.defer(function()
+        pcall(loadConfig)
+    end)
+
     return window
 end
 
-return HwanUI
+return Hwan
