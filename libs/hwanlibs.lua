@@ -1,4 +1,4 @@
--- Hwan_Hub (updated dropdown positioning + split panels)
+-- Hwan_Hub (updated dropdown positioning: panels aligned with MainDivider center)
 local Hwan = {}
 Hwan.__index = Hwan
 
@@ -725,7 +725,7 @@ function Hwan:CreateWindow(opts)
 
             local function updatePanelPos()
                 if (not Frame) or (not Frame.Parent) then return end
-                -- if both panels exist, reposition them relative to main Frame (to its right)
+                -- if both panels exist, reposition them relative to main Frame (to its right) and align gap center with MainDivider center
                 pcall(function()
                     local screenSize = Workspace.CurrentCamera and Workspace.CurrentCamera.ViewportSize or Vector2.new(1920,1080)
                     local panelW = math.clamp(math.floor(Frame.AbsoluteSize.X - 16), 220, 520)
@@ -737,32 +737,53 @@ function Hwan:CreateWindow(opts)
                     local optionsH = math.min(#options * itemH, maxVisible * itemH)
                     local selectedAreaH = math.clamp(math.ceil((Frame and Frame.AbsoluteSize.Y and Frame.AbsoluteSize.Y * 0.22) or 52), 40, 140)
                     local pad = 8
-                    local gap = 8
+                    local gap = 12 -- desired gap between smallPanel bottom and bigPanel top
 
-                    -- compute x,y so smallPanel sits to the right of main Frame
+                    -- compute x so panels sit to the right of main Frame
                     local mainAbsPos = Frame.AbsolutePosition
                     local mainAbsSize = Frame.AbsoluteSize
                     local x = mainAbsPos.X + mainAbsSize.X + 8
-                    local topY = mainAbsPos.Y + 8 -- align near top of main frame (slight offset)
                     -- if not enough room on right, place on left side of main frame
                     if x + panelW + 8 > screenSize.X then
                         x = math.max(8, mainAbsPos.X - panelW - 8)
                     end
 
-                    -- clamp y
-                    local totalH = selectedAreaH + gap + optionsH + headerH + pad
-                    local y = topY
-                    if y + totalH + 8 > screenSize.Y then
-                        y = math.max(8, screenSize.Y - totalH - 8)
+                    -- compute desired vertical placement so MainDivider center is centered in the gap
+                    local mainDivCenterY = nil
+                    if MainDivider and MainDivider.Parent and MainDivider.AbsoluteSize and MainDivider.AbsoluteSize.Y and MainDivider.AbsolutePosition then
+                        mainDivCenterY = MainDivider.AbsolutePosition.Y + (MainDivider.AbsoluteSize.Y / 2)
+                    else
+                        -- fallback: align roughly with top of Frame + some offset
+                        mainDivCenterY = mainAbsPos.Y + (mainAbsSize.Y * 0.5)
+                    end
+
+                    -- calculate smallTop and bigTop using the gap center rule:
+                    -- smallTop = centerY - (gap/2) - selectedAreaH
+                    -- bigTop   = centerY + (gap/2)
+                    local smallTop = math.floor(mainDivCenterY - (gap/2) - selectedAreaH)
+                    local bigTop = math.floor(mainDivCenterY + (gap/2))
+
+                    -- boundary checks: ensure within screen
+                    local totalH = selectedAreaH + gap + (headerH + optionsH + 6)
+                    if smallTop < 8 then
+                        local shift = 8 - smallTop
+                        smallTop = smallTop + shift
+                        bigTop = bigTop + shift
+                    end
+                    if (bigTop + headerH + optionsH + 6 + 8) > screenSize.Y then
+                        local overflow = (bigTop + headerH + optionsH + 6 + 8) - screenSize.Y
+                        smallTop = smallTop - overflow
+                        bigTop = bigTop - overflow
+                        if smallTop < 8 then smallTop = 8; bigTop = smallTop + selectedAreaH + gap end
                     end
 
                     if smallPanel and smallPanel.Parent then
                         smallPanel.Size = UDim2.new(0, panelW, 0, selectedAreaH)
-                        smallPanel.Position = UDim2.new(0, x, 0, y)
+                        smallPanel.Position = UDim2.new(0, x, 0, smallTop)
                     end
                     if bigPanel and bigPanel.Parent then
                         bigPanel.Size = UDim2.new(0, panelW, 0, headerH + optionsH + 6)
-                        bigPanel.Position = UDim2.new(0, x, 0, y + selectedAreaH + gap)
+                        bigPanel.Position = UDim2.new(0, x, 0, bigTop)
                         -- update contentFrame size
                         if contentFrame then
                             contentFrame.Size = UDim2.new(1, -12, 0, optionsH)
@@ -804,25 +825,44 @@ function Hwan:CreateWindow(opts)
                 local optionsH = math.min(#options * itemH, maxVisible * itemH)
                 local selectedAreaH = math.clamp(math.ceil((Frame and Frame.AbsoluteSize.Y and Frame.AbsoluteSize.Y * 0.22) or 52), 40, 140)
                 local pad = 8
-                local gap = 8
+                local gap = 12 -- desired gap between smallPanel bottom and bigPanel top
 
-                -- compute position near main Frame
+                -- compute position near main Frame (x)
                 local mainAbsPos = Frame.AbsolutePosition
                 local mainAbsSize = Frame.AbsoluteSize
                 local x = mainAbsPos.X + mainAbsSize.X + 8
-                local topY = mainAbsPos.Y + 8
                 local screenSize = Workspace.CurrentCamera and Workspace.CurrentCamera.ViewportSize or Vector2.new(1920,1080)
                 if x + panelW + 8 > screenSize.X then
                     x = math.max(8, mainAbsPos.X - panelW - 8)
                 end
-                local totalH = selectedAreaH + gap + optionsH + headerH + pad
-                local y = topY
-                if y + totalH + 8 > screenSize.Y then
-                    y = math.max(8, screenSize.Y - totalH - 8)
+
+                -- compute vertical placement so MainDivider center sits between the panels
+                local mainDivCenterY = nil
+                if MainDivider and MainDivider.Parent and MainDivider.AbsoluteSize and MainDivider.AbsoluteSize.Y and MainDivider.AbsolutePosition then
+                    mainDivCenterY = MainDivider.AbsolutePosition.Y + (MainDivider.AbsoluteSize.Y / 2)
+                else
+                    mainDivCenterY = mainAbsPos.Y + (mainAbsSize.Y * 0.5)
+                end
+
+                local smallTop = math.floor(mainDivCenterY - (gap/2) - selectedAreaH)
+                local bigTop = math.floor(mainDivCenterY + (gap/2))
+
+                -- boundary checks
+                if smallTop < 8 then
+                    local shift = 8 - smallTop
+                    smallTop = smallTop + shift
+                    bigTop = bigTop + shift
+                end
+                local bigH = headerH + optionsH + 6
+                if (bigTop + bigH + 8) > screenSize.Y then
+                    local overflow = (bigTop + bigH + 8) - screenSize.Y
+                    smallTop = smallTop - overflow
+                    bigTop = bigTop - overflow
+                    if smallTop < 8 then smallTop = 8; bigTop = smallTop + selectedAreaH + gap end
                 end
 
                 -- SMALL panel (selected items)
-                smallPanel = new("Frame", {Parent = screenGui, Size = UDim2.new(0, panelW, 0, selectedAreaH), Position = UDim2.new(0, x, 0, y), BackgroundColor3 = cfg.Theme.Main, ZIndex = 220, BackgroundTransparency = 1})
+                smallPanel = new("Frame", {Parent = screenGui, Size = UDim2.new(0, panelW, 0, selectedAreaH), Position = UDim2.new(0, x, 0, smallTop), BackgroundColor3 = cfg.Theme.Main, ZIndex = 220, BackgroundTransparency = 1})
                 new("UICorner", {Parent = smallPanel, CornerRadius = UDim.new(0,8)})
                 local smallStroke = new("UIStroke", {Parent = smallPanel})
                 smallStroke.Thickness = 2
@@ -837,7 +877,7 @@ function Hwan:CreateWindow(opts)
                 selectedLabel.AutomaticSize = Enum.AutomaticSize.None
 
                 -- BIG panel (options area with header)
-                bigPanel = new("Frame", {Parent = screenGui, Size = UDim2.new(0, panelW, 0, headerH + optionsH + 6), Position = UDim2.new(0, x, 0, y + selectedAreaH + gap), BackgroundColor3 = cfg.Theme.Main, ZIndex = 220, BackgroundTransparency = 1})
+                bigPanel = new("Frame", {Parent = screenGui, Size = UDim2.new(0, panelW, 0, headerH + optionsH + 6), Position = UDim2.new(0, x, 0, bigTop), BackgroundColor3 = cfg.Theme.Main, ZIndex = 220, BackgroundTransparency = 1})
                 new("UICorner", {Parent = bigPanel, CornerRadius = UDim.new(0,8)})
                 local bigStroke = new("UIStroke", {Parent = bigPanel})
                 bigStroke.Thickness = 2
