@@ -1,17 +1,4 @@
--- Hwan (Hwan UI library) - Updated with fixes per user request
--- Changes:
--- 1) Default size: Width=300, Height=400
--- 2) Rename Divider0 -> MainDivider and continuous white<->gray color effect
--- 3) Slider: text color changes to match background when fill covers it (immediate on drag)
--- 4) Button: right-side button text fixed to "Button" (left label displays Name)
--- 5) Notifications: larger, auto-size, up to 5 visible stacked; extras queued
--- 6) Dropdown: show text correctly, followConn to update position, smoother hide like main GUI, MultipleOptions support
--- 7) ToggleKey accepts Enum.KeyCode or string like "K"; window:SetToggleKey API added
--- 8) Defensive guards for destroyed GUI and improved cleanup
--- 9) Other small defensive improvements and style consistency
--- 10) FPS smoothing to reduce spikey numbers
--- 11) Keybind: only accept keyboard; cancel when left-click outside; right-click still clears
-
+-- Hwan_Hub (updated dropdown)
 local Hwan = {}
 Hwan.__index = Hwan
 
@@ -663,6 +650,7 @@ function Hwan:CreateWindow(opts)
             return sec
         end
 
+        -- REPLACED CreateDropdown (new behavior: small selected area above, big options list below; btn text fixed to "Select")
         function tab:CreateDropdown(opts)
             opts = opts or {}
             local name = opts.Name or ""
@@ -677,18 +665,44 @@ function Hwan:CreateWindow(opts)
             local btn = new("TextButton", {Parent = frame, Size = UDim2.new(btnWidthScale, -8, 1, 0), Position = UDim2.new(1 - btnWidthScale, 4, 0, 0), BackgroundColor3 = cfg.Theme.Btn, Text = "Select", Font = Enum.Font.SourceSansBold, TextSize = 17, TextColor3 = cfg.Theme.Text, AutoButtonColor = false, TextScaled = false, TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center})
             new("UICorner", {Parent = btn, CornerRadius = UDim.new(0,8)})
 
-            local panel, followConn, contentFrame
+            local panel, followConn, contentFrame, selectedScroll, selectedLabel
             local instance
             local uid = HttpService:GenerateGUID(false)
             local selectedIndex = nil
             local selectedSet = {} -- for multiple mode
+
+            local function buildSelectedString()
+                -- preserve order: iterate options in order
+                local vals = {}
+                for i = 1, #options do
+                    if selectedSet[i] then table.insert(vals, tostring(options[i])) end
+                end
+                if #vals == 0 then return "" end
+                return "- " .. table.concat(vals, ", ")
+            end
+
+            local function updateSelectedArea(panelW)
+                if not selectedScroll or not selectedLabel then return end
+                local text = buildSelectedString()
+                local innerPad = 12
+                local bodyFont = Enum.Font.SourceSans
+                local bodySize = 16
+                local maxH = 1000
+                -- compute height needed for wrapped text
+                local maxTextWidth = math.max(10, (panelW or (selectedScroll.AbsoluteSize.X or 260)) - innerPad*2)
+                local txtSize = TextService:GetTextSize(text, bodySize, bodyFont, Vector2.new(maxTextWidth, maxH))
+                local desiredH = math.max(20, math.ceil(txtSize.Y))
+                selectedLabel.Text = text
+                selectedLabel.Size = UDim2.new(1, -innerPad*2, 0, desiredH)
+                -- set CanvasSize so it can scroll vertically if too tall
+                selectedScroll.CanvasSize = UDim2.new(0, 0, 0, desiredH + innerPad)
+            end
 
             local function closePanel()
                 if followConn then pcall(function() followConn:Disconnect() end) end
                 followConn = nil
                 if panel and panel.Parent then
                     pcall(function()
-                        -- fade out texts first
                         for _, child in ipairs(panel:GetDescendants()) do
                             if child:IsA("TextLabel") or child:IsA("TextButton") or child:IsA("TextBox") then
                                 pcall(function() child.TextTransparency = 1 end)
@@ -711,16 +725,39 @@ function Hwan:CreateWindow(opts)
                     local absX = frame.AbsolutePosition.X
                     local absY = frame.AbsolutePosition.Y
                     local screenSize = Workspace.CurrentCamera and Workspace.CurrentCamera.ViewportSize or Vector2.new(1920,1080)
+
+                    -- compute widths/heights relative to main Frame if available
+                    local panelW = 260
+                    if Frame and Frame.AbsoluteSize and Frame.AbsoluteSize.X and Frame.AbsoluteSize.X > 0 then
+                        panelW = math.clamp(math.floor(Frame.AbsoluteSize.X - 16), 220, 520)
+                    end
+
                     local maxVisible = 6
                     local itemH = 36
                     local headerH = 30
-                    local panelH = math.min(headerH + #options*itemH + 8, headerH + maxVisible*itemH + 8)
-                    local panelW = 260
+                    local optionsH = math.min(#options * itemH, maxVisible * itemH)
+                    local selectedAreaH = math.clamp(math.ceil((Frame and Frame.AbsoluteSize.Y and Frame.AbsoluteSize.Y * 0.22) or 52), 40, 140)
+                    local pad = 8
+                    local panelH = headerH + selectedAreaH + optionsH + pad
+
+                    -- prefer to keep panel on right side of the frame row
                     local x = absX + frame.AbsoluteSize.X + 8
                     local y = absY + (frame.AbsoluteSize.Y/2) - (panelH/2)
                     x = math.clamp(x, 8, screenSize.X - panelW - 8)
                     y = math.clamp(y, 8, screenSize.Y - panelH - 8)
                     panel.Position = UDim2.new(0, x, 0, y)
+
+                    -- if selectedScroll exists, update its width/height to match
+                    if selectedScroll then
+                        selectedScroll.Size = UDim2.new(1, -12, 0, selectedAreaH)
+                        selectedScroll.Position = UDim2.new(0, 6, 0, headerH)
+                        updateSelectedArea(panelW)
+                    end
+                    if contentFrame then
+                        contentFrame.Size = UDim2.new(1, -12, 0, optionsH)
+                        contentFrame.Position = UDim2.new(0, 6, 0, headerH + selectedAreaH + 6)
+                        contentFrame.CanvasSize = UDim2.new(0, 0, 0, #options * itemH)
+                    end
                 end)
             end
 
@@ -738,13 +775,22 @@ function Hwan:CreateWindow(opts)
                     end
                 end
 
-                task.wait(0.16)
+                task.wait(0.12)
+
+                local panelW = 260
+                if Frame and Frame.AbsoluteSize and Frame.AbsoluteSize.X and Frame.AbsoluteSize.X > 0 then
+                    panelW = math.clamp(math.floor(Frame.AbsoluteSize.X - 16), 220, 520)
+                end
 
                 local maxVisible = 6
                 local itemH = 36
                 local headerH = 30
-                local panelH = math.min(headerH + #options*itemH + 8, headerH + maxVisible*itemH + 8)
-                panel = new("Frame", {Parent = screenGui, Size = UDim2.new(0,260,0, panelH), BackgroundColor3 = cfg.Theme.Main, ZIndex = 220, BackgroundTransparency = 1})
+                local optionsH = math.min(#options * itemH, maxVisible * itemH)
+                local selectedAreaH = math.clamp(math.ceil((Frame and Frame.AbsoluteSize.Y and Frame.AbsoluteSize.Y * 0.22) or 52), 40, 140)
+                local pad = 8
+                local panelH = headerH + selectedAreaH + optionsH + pad
+
+                panel = new("Frame", {Parent = screenGui, Size = UDim2.new(0, panelW, 0, panelH), BackgroundColor3 = cfg.Theme.Main, ZIndex = 220, BackgroundTransparency = 1})
                 new("UICorner", {Parent = panel, CornerRadius = UDim.new(0,8)})
                 local panelStroke = new("UIStroke", {Parent = panel})
                 panelStroke.Thickness = 2
@@ -753,7 +799,18 @@ function Hwan:CreateWindow(opts)
 
                 local header = new("TextLabel", {Parent = panel, Size = UDim2.new(1,-12,0,headerH-4), Position = UDim2.new(0,6,0,6), BackgroundTransparency = 1, Font = Enum.Font.SourceSansBold, TextSize = 17, Text = name or "", TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Center, TextColor3 = cfg.Theme.Text, ZIndex = 221})
 
-                contentFrame = new("ScrollingFrame", {Parent = panel, Size = UDim2.new(1,-12,0,panelH - headerH - 10), Position = UDim2.new(0,6,0, headerH), BackgroundTransparency = 1, ScrollBarThickness = 0, CanvasSize = UDim2.new(0,0,0, #options * itemH), VerticalScrollBarInset = Enum.ScrollBarInset.Always})
+                -- SMALL selected area (scrolling text)
+                selectedScroll = new("ScrollingFrame", {Parent = panel, Size = UDim2.new(1, -12, 0, selectedAreaH), Position = UDim2.new(0, 6, 0, headerH), BackgroundTransparency = 1, ScrollBarThickness = 6, CanvasSize = UDim2.new(0,0,0,0)})
+                selectedScroll.AutomaticCanvasSize = Enum.AutomaticSize.None
+                new("UICorner", {Parent = selectedScroll, CornerRadius = UDim.new(0,6)})
+                local innerSel = new("Frame", {Parent = selectedScroll, Size = UDim2.new(1, 0, 1, 0), Position = UDim2.new(0,0,0,0), BackgroundTransparency = 1})
+                new("UICorner", {Parent = innerSel, CornerRadius = UDim.new(0,6)})
+                local innerPad = 12
+                selectedLabel = new("TextLabel", {Parent = innerSel, Size = UDim2.new(1, -innerPad*2, 0, 20), Position = UDim2.new(0, innerPad, 0, 6), BackgroundTransparency = 1, Font = Enum.Font.SourceSans, TextSize = 16, Text = "", TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, TextColor3 = cfg.Theme.Text, ZIndex = 222, TextWrapped = true})
+                selectedLabel.AutomaticSize = Enum.AutomaticSize.None
+
+                -- BIG options area (list of selectable rows)
+                contentFrame = new("ScrollingFrame", {Parent = panel, Size = UDim2.new(1, -12, 0, optionsH), Position = UDim2.new(0, 6, 0, headerH + selectedAreaH + 6), BackgroundTransparency = 1, ScrollBarThickness = 0, CanvasSize = UDim2.new(0, 0, 0, #options * itemH), VerticalScrollBarInset = Enum.ScrollBarInset.Always})
                 contentFrame.AutomaticCanvasSize = Enum.AutomaticSize.None
                 contentFrame.CanvasPosition = Vector2.new(0,0)
 
@@ -763,14 +820,11 @@ function Hwan:CreateWindow(opts)
                     row.TextStrokeTransparency = 1
 
                     row.MouseEnter:Connect(function()
-                        if selectedIndex == i then return end
                         if selectedSet[i] then return end
                         tween(row, {BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.06)}, 0.10)
                     end)
                     row.MouseLeave:Connect(function()
-                        if selectedIndex == i then
-                            tween(row, {BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.12)}, 0.10)
-                        elseif selectedSet[i] then
+                        if selectedSet[i] then
                             tween(row, {BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.12)}, 0.10)
                         else
                             tween(row, {BackgroundColor3 = cfg.Theme.TabBg}, 0.10)
@@ -790,24 +844,20 @@ function Hwan:CreateWindow(opts)
                                 row.TextColor3 = Color3.fromRGB(255,255,255)
                             end
 
-                            -- build selected values
+                            -- build selected values in order
                             local selVals = {}
-                            for idx, _ in pairs(selectedSet) do
-                                table.insert(selVals, options[idx])
+                            for j = 1, #options do
+                                if selectedSet[j] then table.insert(selVals, options[j]) end
                             end
-                            if #selVals == 0 then
-                                btn.Text = "Select"
-                            elseif #selVals == 1 then
-                                btn.Text = tostring(selVals[1])
-                            else
-                                btn.Text = tostring(#selVals) .. " selected"
-                            end
+
+                            -- update small selected area (always keep btn text "Select")
+                            updateSelectedArea(panelW)
 
                             -- save state
                             if window and window._savedState then
                                 if #selVals > 0 then
                                     local idxs = {}
-                                    for idx,_ in pairs(selectedSet) do table.insert(idxs, idx) end
+                                    for j = 1, #options do if selectedSet[j] then table.insert(idxs, j) end end
                                     window._savedState.dropdownSelections[uid] = idxs
                                 else
                                     window._savedState.dropdownSelections[uid] = nil
@@ -826,20 +876,21 @@ function Hwan:CreateWindow(opts)
                             return
                         end
 
-                        -- single-select behavior
+                        -- single-select behavior (no btn.Text change)
                         if selectedIndex == i then
                             selectedIndex = nil
                             row.BackgroundColor3 = cfg.Theme.TabBg
                             row.TextColor3 = cfg.Theme.Text
-                            if window and window._savedState and window._savedState.dropdownSelections then
-                                window._savedState.dropdownSelections[uid] = nil
-                            end
+                            window._savedState.dropdownSelections[uid] = nil
                             if callback then pcall(callback, nil) end
-                            btn.Text = "Select"
+                            -- update selected area (empty)
+                            selectedSet = {}
+                            updateSelectedArea(panelW)
                             if flag and window.Flags[flag] and window.Flags[flag].Set then window.Flags[flag].Set(nil) end
                             return
                         end
 
+                        -- clear previous visuals
                         for _, child in ipairs(contentFrame:GetChildren()) do
                             if child:IsA("TextButton") then
                                 pcall(function() child.BackgroundColor3 = cfg.Theme.TabBg; child.TextColor3 = cfg.Theme.Text end)
@@ -847,9 +898,15 @@ function Hwan:CreateWindow(opts)
                         end
 
                         selectedIndex = i
+                        -- reflect selection in visuals & selectedSet (single select stored as index)
+                        selectedSet = {}
+                        selectedSet[i] = true
                         row.BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.14)
                         row.TextColor3 = Color3.fromRGB(255,255,255)
-                        btn.Text = tostring(opt)
+
+                        -- update small selected area
+                        updateSelectedArea(panelW)
+
                         if window and window._savedState then
                             window._savedState.dropdownSelections[uid] = i
                         end
@@ -863,42 +920,34 @@ function Hwan:CreateWindow(opts)
                     local saved = window and window._savedState and window._savedState.dropdownSelections and window._savedState.dropdownSelections[uid]
                     if saved and contentFrame then
                         if multiple and type(saved) == "table" then
-                            -- mark rows
+                            selectedSet = {}
                             for _, idx in ipairs(saved) do
                                 selectedSet[idx] = true
                             end
-                            -- update visuals & button text
-                            local selVals = {}
+                            -- update visuals & selected text
                             for childI, child in ipairs(contentFrame:GetChildren()) do
                                 if child:IsA("TextButton") then
-                                    local i = childI -- children are ordered as created
+                                    local i = childI
                                     if selectedSet[i] then
                                         child.BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.14)
                                         child.TextColor3 = Color3.fromRGB(255,255,255)
-                                        table.insert(selVals, options[i])
                                     else
                                         child.BackgroundColor3 = cfg.Theme.TabBg
                                         child.TextColor3 = cfg.Theme.Text
                                     end
                                 end
                             end
-                            if #selVals == 0 then
-                                btn.Text = "Select"
-                            elseif #selVals == 1 then
-                                btn.Text = tostring(selVals[1])
-                            else
-                                btn.Text = tostring(#selVals) .. " selected"
-                            end
+                            updateSelectedArea(panelW)
                         elseif (type(saved) == "number") then
-                            -- single index
                             local idx = saved
+                            selectedSet = {}
+                            selectedSet[idx] = true
                             local children = contentFrame:GetChildren()
                             for childI, child in ipairs(children) do
                                 if child:IsA("TextButton") then
                                     if childI == idx then
                                         child.BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.14)
                                         child.TextColor3 = Color3.fromRGB(255,255,255)
-                                        btn.Text = tostring(options[idx])
                                         selectedIndex = idx
                                     else
                                         child.BackgroundColor3 = cfg.Theme.TabBg
@@ -906,6 +955,7 @@ function Hwan:CreateWindow(opts)
                                     end
                                 end
                             end
+                            updateSelectedArea(panelW)
                         end
                     end
                 end)
@@ -918,7 +968,7 @@ function Hwan:CreateWindow(opts)
 
                 panel.BackgroundTransparency = 1
                 header.TextTransparency = 1
-                for _, child in ipairs(contentFrame:GetDescendants()) do
+                for _, child in ipairs(panel:GetDescendants()) do
                     if child:IsA("TextLabel") or child:IsA("TextButton") or child:IsA("TextBox") then
                         pcall(function() child.TextTransparency = 1 end)
                     end
@@ -955,10 +1005,51 @@ function Hwan:CreateWindow(opts)
             end)
             addConn(openConn)
 
-            instance = { UI = frame, Set = function(v) btn.Text = tostring(v) end, Open = showPanel, Close = closePanel, IsOpen = function() return (panel ~= nil) end, Button = btn, uid = uid, Flag = flag }
+            instance = { UI = frame, Set = function(v)
+                -- keep button text "Select" always; support setting selection programmatically:
+                -- for table -> multiple selection (by values), for number -> index, for string -> match value
+                selectedSet = {}
+                selectedIndex = nil
+                if type(v) == "table" then
+                    for i=1,#options do
+                        for _, val in ipairs(v) do
+                            if tostring(val) == tostring(options[i]) then selectedSet[i] = true end
+                        end
+                    end
+                elseif type(v) == "number" then
+                    if v >= 1 and v <= #options then selectedSet[v] = true; selectedIndex = v end
+                elseif type(v) == "string" then
+                    for i=1,#options do if tostring(options[i]) == v then selectedSet[i] = true; selectedIndex = i; break end end
+                end
+                if panel and panel.Parent then
+                    -- update visuals inside open panel
+                    for childI, child in ipairs(contentFrame:GetChildren()) do
+                        if child:IsA("TextButton") then
+                            local i = childI
+                            if selectedSet[i] then
+                                child.BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.14)
+                                child.TextColor3 = Color3.fromRGB(255,255,255)
+                            else
+                                child.BackgroundColor3 = cfg.Theme.TabBg
+                                child.TextColor3 = cfg.Theme.Text
+                            end
+                        end
+                    end
+                    updateSelectedArea(panel.AbsoluteSize.X)
+                end
+            end, Open = showPanel, Close = closePanel, IsOpen = function() return (panel ~= nil) end, Button = btn, uid = uid, Flag = flag }
 
             if flag and type(flag) == "string" then
-                registerFlag(flag, { Type = "Dropdown", Get = function() return btn.Text end, Set = function(v) btn.Text = tostring(v) end, UI = frame })
+                registerFlag(flag, { Type = "Dropdown", Get = function()
+                    -- return selected values as table (or nil)
+                    local sel = {}
+                    for i = 1, #options do if selectedSet[i] then table.insert(sel, options[i]) end end
+                    if #sel == 0 then return nil end
+                    if not multiple and #sel == 1 then return sel[1] end
+                    return sel
+                end, Set = function(v)
+                    instance.Set(v)
+                end, UI = frame })
             end
 
             if window then
