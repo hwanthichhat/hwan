@@ -677,7 +677,7 @@ function Hwan:CreateWindow(opts)
             local btn = new("TextButton", {Parent = frame, Size = UDim2.new(btnWidthScale, -8, 1, 0), Position = UDim2.new(1 - btnWidthScale, 4, 0, 0), BackgroundColor3 = cfg.Theme.Btn, Text = "Select", Font = Enum.Font.SourceSansBold, TextSize = 17, TextColor3 = cfg.Theme.Text, AutoButtonColor = false, TextScaled = false, TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center})
             new("UICorner", {Parent = btn, CornerRadius = UDim.new(0,8)})
 
-            local panel, escConn, followConn, contentFrame
+            local panel, followConn, contentFrame
             local instance
             local uid = HttpService:GenerateGUID(false)
             local selectedIndex = nil
@@ -686,8 +686,6 @@ function Hwan:CreateWindow(opts)
             local function closePanel()
                 if followConn then pcall(function() followConn:Disconnect() end) end
                 followConn = nil
-                if escConn then pcall(function() escConn:Disconnect() end) end
-                escConn = nil
                 if panel and panel.Parent then
                     pcall(function()
                         -- fade out texts first
@@ -710,16 +708,16 @@ function Hwan:CreateWindow(opts)
             local function updatePanelPos()
                 if not panel or not panel.Parent then return end
                 pcall(function()
-                    local absX = Frame.AbsolutePosition.X
-                    local absY = Frame.AbsolutePosition.Y
+                    local absX = frame.AbsolutePosition.X
+                    local absY = frame.AbsolutePosition.Y
                     local screenSize = Workspace.CurrentCamera and Workspace.CurrentCamera.ViewportSize or Vector2.new(1920,1080)
                     local maxVisible = 6
                     local itemH = 36
                     local headerH = 30
                     local panelH = math.min(headerH + #options*itemH + 8, headerH + maxVisible*itemH + 8)
                     local panelW = 260
-                    local x = absX + Frame.AbsoluteSize.X + 8
-                    local y = absY + (Frame.AbsoluteSize.Y/2) - (panelH/2)
+                    local x = absX + frame.AbsoluteSize.X + 8
+                    local y = absY + (frame.AbsoluteSize.Y/2) - (panelH/2)
                     x = math.clamp(x, 8, screenSize.X - panelW - 8)
                     y = math.clamp(y, 8, screenSize.Y - panelH - 8)
                     panel.Position = UDim2.new(0, x, 0, y)
@@ -1144,10 +1142,14 @@ function Hwan:CreateWindow(opts)
                     local leftPad = textPadding
                     -- prefer AbsoluteSize when available
                     local fillWidth = 0
-                    if fill and fill.AbsoluteSize and fill.AbsoluteSize.X then
+                    if fill and fill.AbsoluteSize and fill.AbsoluteSize.X and fill.AbsoluteSize.X > 0 then
                         fillWidth = fill.AbsoluteSize.X
+                    elseif fill and fill.Size and track and track.AbsoluteSize and track.AbsoluteSize.X and track.AbsoluteSize.X > 0 then
+                        local scale = (fill.Size.X and fill.Size.X.Scale) or 0
+                        local offset = (fill.Size.X and fill.Size.X.Offset) or 0
+                        fillWidth = scale * track.AbsoluteSize.X + offset
                     else
-                        fillWidth = (fill.Size and (fill.Size.X.Scale * math.max(1, track.AbsoluteSize.X))) or 0
+                        fillWidth = 0
                     end
                     if fillWidth >= (leftPad + textWidthPx) then
                         leftLabel.TextColor3 = cfg.Theme.Main
