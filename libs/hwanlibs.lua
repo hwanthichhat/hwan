@@ -1,4 +1,4 @@
--- Hwan_Hub (updated dropdown)
+-- Hwan_Hub (updated dropdown positioning + split panels)
 local Hwan = {}
 Hwan.__index = Hwan
 
@@ -650,7 +650,7 @@ function Hwan:CreateWindow(opts)
             return sec
         end
 
-        -- REPLACED CreateDropdown (new behavior: small selected area above, big options list below; btn text fixed to "Select")
+        -- REPLACED CreateDropdown (new behavior: 2 separate frames: smallPanel (selected items) on top, bigPanel (options) below; panel positioned adjacent to main Frame)
         function tab:CreateDropdown(opts)
             opts = opts or {}
             local name = opts.Name or ""
@@ -665,7 +665,7 @@ function Hwan:CreateWindow(opts)
             local btn = new("TextButton", {Parent = frame, Size = UDim2.new(btnWidthScale, -8, 1, 0), Position = UDim2.new(1 - btnWidthScale, 4, 0, 0), BackgroundColor3 = cfg.Theme.Btn, Text = "Select", Font = Enum.Font.SourceSansBold, TextSize = 17, TextColor3 = cfg.Theme.Text, AutoButtonColor = false, TextScaled = false, TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center})
             new("UICorner", {Parent = btn, CornerRadius = UDim.new(0,8)})
 
-            local panel, followConn, contentFrame, selectedScroll, selectedLabel
+            local smallPanel, bigPanel, followConn, selectedScroll, selectedLabel, contentFrame
             local instance
             local uid = HttpService:GenerateGUID(false)
             local selectedIndex = nil
@@ -688,49 +688,48 @@ function Hwan:CreateWindow(opts)
                 local bodyFont = Enum.Font.SourceSans
                 local bodySize = 16
                 local maxH = 1000
-                -- compute height needed for wrapped text
                 local maxTextWidth = math.max(10, (panelW or (selectedScroll.AbsoluteSize.X or 260)) - innerPad*2)
                 local txtSize = TextService:GetTextSize(text, bodySize, bodyFont, Vector2.new(maxTextWidth, maxH))
                 local desiredH = math.max(20, math.ceil(txtSize.Y))
                 selectedLabel.Text = text
                 selectedLabel.Size = UDim2.new(1, -innerPad*2, 0, desiredH)
-                -- set CanvasSize so it can scroll vertically if too tall
                 selectedScroll.CanvasSize = UDim2.new(0, 0, 0, desiredH + innerPad)
             end
 
             local function closePanel()
                 if followConn then pcall(function() followConn:Disconnect() end) end
                 followConn = nil
-                if panel and panel.Parent then
+                if smallPanel and smallPanel.Parent then
                     pcall(function()
-                        for _, child in ipairs(panel:GetDescendants()) do
-                            if child:IsA("TextLabel") or child:IsA("TextButton") or child:IsA("TextBox") then
-                                pcall(function() child.TextTransparency = 1 end)
-                            end
-                        end
-                        tween(panel, {BackgroundTransparency = 1}, 0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-                        task.wait(0.14)
-                        panel:Destroy()
+                        tween(smallPanel, {BackgroundTransparency = 1}, 0.12)
+                        task.wait(0.12)
+                        safeDestroy(smallPanel)
                     end)
                 end
-                panel = nil
+                if bigPanel and bigPanel.Parent then
+                    pcall(function()
+                        tween(bigPanel, {BackgroundTransparency = 1}, 0.12)
+                        task.wait(0.12)
+                        safeDestroy(bigPanel)
+                    end)
+                end
+                smallPanel = nil
+                bigPanel = nil
+                selectedScroll = nil
+                selectedLabel = nil
+                contentFrame = nil
                 if instance and window and window._dropdownStates then
                     window._dropdownStates[uid] = false
                 end
             end
 
             local function updatePanelPos()
-                if not panel or not panel.Parent then return end
+                if (not Frame) or (not Frame.Parent) then return end
+                -- if both panels exist, reposition them relative to main Frame (to its right)
                 pcall(function()
-                    local absX = frame.AbsolutePosition.X
-                    local absY = frame.AbsolutePosition.Y
                     local screenSize = Workspace.CurrentCamera and Workspace.CurrentCamera.ViewportSize or Vector2.new(1920,1080)
-
-                    -- compute widths/heights relative to main Frame if available
-                    local panelW = 260
-                    if Frame and Frame.AbsoluteSize and Frame.AbsoluteSize.X and Frame.AbsoluteSize.X > 0 then
-                        panelW = math.clamp(math.floor(Frame.AbsoluteSize.X - 16), 220, 520)
-                    end
+                    local panelW = math.clamp(math.floor(Frame.AbsoluteSize.X - 16), 220, 520)
+                    if panelW <= 0 then panelW = 260 end
 
                     local maxVisible = 6
                     local itemH = 36
@@ -738,31 +737,50 @@ function Hwan:CreateWindow(opts)
                     local optionsH = math.min(#options * itemH, maxVisible * itemH)
                     local selectedAreaH = math.clamp(math.ceil((Frame and Frame.AbsoluteSize.Y and Frame.AbsoluteSize.Y * 0.22) or 52), 40, 140)
                     local pad = 8
-                    local panelH = headerH + selectedAreaH + optionsH + pad
+                    local gap = 8
 
-                    -- prefer to keep panel on right side of the frame row
-                    local x = absX + frame.AbsoluteSize.X + 8
-                    local y = absY + (frame.AbsoluteSize.Y/2) - (panelH/2)
-                    x = math.clamp(x, 8, screenSize.X - panelW - 8)
-                    y = math.clamp(y, 8, screenSize.Y - panelH - 8)
-                    panel.Position = UDim2.new(0, x, 0, y)
+                    -- compute x,y so smallPanel sits to the right of main Frame
+                    local mainAbsPos = Frame.AbsolutePosition
+                    local mainAbsSize = Frame.AbsoluteSize
+                    local x = mainAbsPos.X + mainAbsSize.X + 8
+                    local topY = mainAbsPos.Y + 8 -- align near top of main frame (slight offset)
+                    -- if not enough room on right, place on left side of main frame
+                    if x + panelW + 8 > screenSize.X then
+                        x = math.max(8, mainAbsPos.X - panelW - 8)
+                    end
 
-                    -- if selectedScroll exists, update its width/height to match
+                    -- clamp y
+                    local totalH = selectedAreaH + gap + optionsH + headerH + pad
+                    local y = topY
+                    if y + totalH + 8 > screenSize.Y then
+                        y = math.max(8, screenSize.Y - totalH - 8)
+                    end
+
+                    if smallPanel and smallPanel.Parent then
+                        smallPanel.Size = UDim2.new(0, panelW, 0, selectedAreaH)
+                        smallPanel.Position = UDim2.new(0, x, 0, y)
+                    end
+                    if bigPanel and bigPanel.Parent then
+                        bigPanel.Size = UDim2.new(0, panelW, 0, headerH + optionsH + 6)
+                        bigPanel.Position = UDim2.new(0, x, 0, y + selectedAreaH + gap)
+                        -- update contentFrame size
+                        if contentFrame then
+                            contentFrame.Size = UDim2.new(1, -12, 0, optionsH)
+                            contentFrame.Position = UDim2.new(0, 6, 0, headerH)
+                            contentFrame.CanvasSize = UDim2.new(0, 0, 0, #options * itemH)
+                        end
+                    end
+
                     if selectedScroll then
                         selectedScroll.Size = UDim2.new(1, -12, 0, selectedAreaH)
-                        selectedScroll.Position = UDim2.new(0, 6, 0, headerH)
+                        selectedScroll.Position = UDim2.new(0, 6, 0, 6)
                         updateSelectedArea(panelW)
-                    end
-                    if contentFrame then
-                        contentFrame.Size = UDim2.new(1, -12, 0, optionsH)
-                        contentFrame.Position = UDim2.new(0, 6, 0, headerH + selectedAreaH + 6)
-                        contentFrame.CanvasSize = UDim2.new(0, 0, 0, #options * itemH)
                     end
                 end)
             end
 
             local function showPanel()
-                if panel and panel.Parent then
+                if smallPanel and smallPanel.Parent then
                     closePanel()
                     return
                 end
@@ -777,40 +795,58 @@ function Hwan:CreateWindow(opts)
 
                 task.wait(0.12)
 
-                local panelW = 260
-                if Frame and Frame.AbsoluteSize and Frame.AbsoluteSize.X and Frame.AbsoluteSize.X > 0 then
-                    panelW = math.clamp(math.floor(Frame.AbsoluteSize.X - 16), 220, 520)
-                end
-
+                -- compute sizes
+                local panelW = math.clamp(math.floor(Frame.AbsoluteSize.X - 16), 220, 520)
+                if panelW <= 0 then panelW = 260 end
                 local maxVisible = 6
                 local itemH = 36
                 local headerH = 30
                 local optionsH = math.min(#options * itemH, maxVisible * itemH)
                 local selectedAreaH = math.clamp(math.ceil((Frame and Frame.AbsoluteSize.Y and Frame.AbsoluteSize.Y * 0.22) or 52), 40, 140)
                 local pad = 8
-                local panelH = headerH + selectedAreaH + optionsH + pad
+                local gap = 8
 
-                panel = new("Frame", {Parent = screenGui, Size = UDim2.new(0, panelW, 0, panelH), BackgroundColor3 = cfg.Theme.Main, ZIndex = 220, BackgroundTransparency = 1})
-                new("UICorner", {Parent = panel, CornerRadius = UDim.new(0,8)})
-                local panelStroke = new("UIStroke", {Parent = panel})
-                panelStroke.Thickness = 2
-                panelStroke.Transparency = 0.8
-                panelStroke.Color = Color3.fromRGB(255,255,255)
+                -- compute position near main Frame
+                local mainAbsPos = Frame.AbsolutePosition
+                local mainAbsSize = Frame.AbsoluteSize
+                local x = mainAbsPos.X + mainAbsSize.X + 8
+                local topY = mainAbsPos.Y + 8
+                local screenSize = Workspace.CurrentCamera and Workspace.CurrentCamera.ViewportSize or Vector2.new(1920,1080)
+                if x + panelW + 8 > screenSize.X then
+                    x = math.max(8, mainAbsPos.X - panelW - 8)
+                end
+                local totalH = selectedAreaH + gap + optionsH + headerH + pad
+                local y = topY
+                if y + totalH + 8 > screenSize.Y then
+                    y = math.max(8, screenSize.Y - totalH - 8)
+                end
 
-                local header = new("TextLabel", {Parent = panel, Size = UDim2.new(1,-12,0,headerH-4), Position = UDim2.new(0,6,0,6), BackgroundTransparency = 1, Font = Enum.Font.SourceSansBold, TextSize = 17, Text = name or "", TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Center, TextColor3 = cfg.Theme.Text, ZIndex = 221})
+                -- SMALL panel (selected items)
+                smallPanel = new("Frame", {Parent = screenGui, Size = UDim2.new(0, panelW, 0, selectedAreaH), Position = UDim2.new(0, x, 0, y), BackgroundColor3 = cfg.Theme.Main, ZIndex = 220, BackgroundTransparency = 1})
+                new("UICorner", {Parent = smallPanel, CornerRadius = UDim.new(0,8)})
+                local smallStroke = new("UIStroke", {Parent = smallPanel})
+                smallStroke.Thickness = 2
+                smallStroke.Transparency = 0.8
+                smallStroke.Color = Color3.fromRGB(255,255,255)
 
-                -- SMALL selected area (scrolling text)
-                selectedScroll = new("ScrollingFrame", {Parent = panel, Size = UDim2.new(1, -12, 0, selectedAreaH), Position = UDim2.new(0, 6, 0, headerH), BackgroundTransparency = 1, ScrollBarThickness = 6, CanvasSize = UDim2.new(0,0,0,0)})
+                selectedScroll = new("ScrollingFrame", {Parent = smallPanel, Size = UDim2.new(1, -12, 1, -12), Position = UDim2.new(0,6,0,6), BackgroundTransparency = 1, ScrollBarThickness = 6, CanvasSize = UDim2.new(0,0,0,0)})
                 selectedScroll.AutomaticCanvasSize = Enum.AutomaticSize.None
                 new("UICorner", {Parent = selectedScroll, CornerRadius = UDim.new(0,6)})
                 local innerSel = new("Frame", {Parent = selectedScroll, Size = UDim2.new(1, 0, 1, 0), Position = UDim2.new(0,0,0,0), BackgroundTransparency = 1})
-                new("UICorner", {Parent = innerSel, CornerRadius = UDim.new(0,6)})
-                local innerPad = 12
-                selectedLabel = new("TextLabel", {Parent = innerSel, Size = UDim2.new(1, -innerPad*2, 0, 20), Position = UDim2.new(0, innerPad, 0, 6), BackgroundTransparency = 1, Font = Enum.Font.SourceSans, TextSize = 16, Text = "", TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, TextColor3 = cfg.Theme.Text, ZIndex = 222, TextWrapped = true})
+                selectedLabel = new("TextLabel", {Parent = innerSel, Size = UDim2.new(1, -12*2, 0, 20), Position = UDim2.new(0, 12, 0, 0), BackgroundTransparency = 1, Font = Enum.Font.SourceSans, TextSize = 16, Text = "", TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, TextColor3 = cfg.Theme.Text, ZIndex = 222, TextWrapped = true})
                 selectedLabel.AutomaticSize = Enum.AutomaticSize.None
 
-                -- BIG options area (list of selectable rows)
-                contentFrame = new("ScrollingFrame", {Parent = panel, Size = UDim2.new(1, -12, 0, optionsH), Position = UDim2.new(0, 6, 0, headerH + selectedAreaH + 6), BackgroundTransparency = 1, ScrollBarThickness = 0, CanvasSize = UDim2.new(0, 0, 0, #options * itemH), VerticalScrollBarInset = Enum.ScrollBarInset.Always})
+                -- BIG panel (options area with header)
+                bigPanel = new("Frame", {Parent = screenGui, Size = UDim2.new(0, panelW, 0, headerH + optionsH + 6), Position = UDim2.new(0, x, 0, y + selectedAreaH + gap), BackgroundColor3 = cfg.Theme.Main, ZIndex = 220, BackgroundTransparency = 1})
+                new("UICorner", {Parent = bigPanel, CornerRadius = UDim.new(0,8)})
+                local bigStroke = new("UIStroke", {Parent = bigPanel})
+                bigStroke.Thickness = 2
+                bigStroke.Transparency = 0.8
+                bigStroke.Color = Color3.fromRGB(255,255,255)
+
+                local header = new("TextLabel", {Parent = bigPanel, Size = UDim2.new(1,-12,0,headerH-4), Position = UDim2.new(0,6,0,6), BackgroundTransparency = 1, Font = Enum.Font.SourceSansBold, TextSize = 17, Text = name or "", TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Center, TextColor3 = cfg.Theme.Text, ZIndex = 221})
+
+                contentFrame = new("ScrollingFrame", {Parent = bigPanel, Size = UDim2.new(1, -12, 0, optionsH), Position = UDim2.new(0, 6, 0, headerH), BackgroundTransparency = 1, ScrollBarThickness = 0, CanvasSize = UDim2.new(0, 0, 0, #options * itemH), VerticalScrollBarInset = Enum.ScrollBarInset.Always})
                 contentFrame.AutomaticCanvasSize = Enum.AutomaticSize.None
                 contentFrame.CanvasPosition = Vector2.new(0,0)
 
@@ -962,24 +998,42 @@ function Hwan:CreateWindow(opts)
 
                 updatePanelPos()
                 pcall(function()
-                    local curPos = panel.Position
-                    panel.Position = UDim2.new(curPos.X.Scale, curPos.X.Offset, curPos.Y.Scale, curPos.Y.Offset - 8)
+                    if smallPanel and smallPanel.Position then
+                        smallPanel.Position = UDim2.new(smallPanel.Position.X.Scale, smallPanel.Position.X.Offset, smallPanel.Position.Y.Scale, smallPanel.Position.Y.Offset - 8)
+                    end
+                    if bigPanel and bigPanel.Position then
+                        bigPanel.Position = UDim2.new(bigPanel.Position.X.Scale, bigPanel.Position.X.Offset, bigPanel.Position.Y.Scale, bigPanel.Position.Y.Offset - 8)
+                    end
                 end)
 
-                panel.BackgroundTransparency = 1
-                header.TextTransparency = 1
-                for _, child in ipairs(panel:GetDescendants()) do
+                if smallPanel and smallPanel.Parent then
+                    smallPanel.BackgroundTransparency = 1
+                end
+                if bigPanel and bigPanel.Parent then
+                    bigPanel.BackgroundTransparency = 1
+                end
+                for _, child in ipairs((smallPanel and smallPanel:GetDescendants()) or {}) do
+                    if child:IsA("TextLabel") or child:IsA("TextButton") or child:IsA("TextBox") then
+                        pcall(function() child.TextTransparency = 1 end)
+                    end
+                end
+                for _, child in ipairs((bigPanel and bigPanel:GetDescendants()) or {}) do
                     if child:IsA("TextLabel") or child:IsA("TextButton") or child:IsA("TextBox") then
                         pcall(function() child.TextTransparency = 1 end)
                     end
                 end
 
                 -- animate open with text fade-in
-                tween(panel, {BackgroundTransparency = 0}, 0.18)
-                tween(panel, {Position = UDim2.new(panel.Position.X.Scale, panel.Position.X.Offset, panel.Position.Y.Scale, panel.Position.Y.Offset + 8)}, 0.18)
+                if smallPanel then tween(smallPanel, {BackgroundTransparency = 0}, 0.18) end
+                if bigPanel then tween(bigPanel, {BackgroundTransparency = 0}, 0.18) end
                 task.delay(0.06, function()
                     pcall(function()
-                        for _, child in ipairs(panel:GetDescendants()) do
+                        for _, child in ipairs((smallPanel and smallPanel:GetDescendants()) or {}) do
+                            if child:IsA("TextLabel") or child:IsA("TextButton") or child:IsA("TextBox") then
+                                TweenService:Create(child, TweenInfo.new(0.18, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {TextTransparency = 0}):Play()
+                            end
+                        end
+                        for _, child in ipairs((bigPanel and bigPanel:GetDescendants()) or {}) do
                             if child:IsA("TextLabel") or child:IsA("TextButton") or child:IsA("TextBox") then
                                 TweenService:Create(child, TweenInfo.new(0.18, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {TextTransparency = 0}):Play()
                             end
@@ -1007,7 +1061,6 @@ function Hwan:CreateWindow(opts)
 
             instance = { UI = frame, Set = function(v)
                 -- keep button text "Select" always; support setting selection programmatically:
-                -- for table -> multiple selection (by values), for number -> index, for string -> match value
                 selectedSet = {}
                 selectedIndex = nil
                 if type(v) == "table" then
@@ -1021,9 +1074,9 @@ function Hwan:CreateWindow(opts)
                 elseif type(v) == "string" then
                     for i=1,#options do if tostring(options[i]) == v then selectedSet[i] = true; selectedIndex = i; break end end
                 end
-                if panel and panel.Parent then
-                    -- update visuals inside open panel
-                    for childI, child in ipairs(contentFrame:GetChildren()) do
+                if smallPanel and smallPanel.Parent then
+                    -- update visuals inside open panels
+                    for childI, child in ipairs((contentFrame and contentFrame:GetChildren()) or {}) do
                         if child:IsA("TextButton") then
                             local i = childI
                             if selectedSet[i] then
@@ -1035,13 +1088,12 @@ function Hwan:CreateWindow(opts)
                             end
                         end
                     end
-                    updateSelectedArea(panel.AbsoluteSize.X)
+                    updateSelectedArea(smallPanel.AbsoluteSize.X)
                 end
-            end, Open = showPanel, Close = closePanel, IsOpen = function() return (panel ~= nil) end, Button = btn, uid = uid, Flag = flag }
+            end, Open = showPanel, Close = closePanel, IsOpen = function() return (smallPanel ~= nil) end, Button = btn, uid = uid, Flag = flag }
 
             if flag and type(flag) == "string" then
                 registerFlag(flag, { Type = "Dropdown", Get = function()
-                    -- return selected values as table (or nil)
                     local sel = {}
                     for i = 1, #options do if selectedSet[i] then table.insert(sel, options[i]) end end
                     if #sel == 0 then return nil end
