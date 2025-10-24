@@ -730,23 +730,23 @@ function tab:CreateDropdown(opts)
     local function computePanelSizes(maxVisible)
         maxVisible = maxVisible or 6
         local itemH = 36
-        local headerH = 30
-        local bigPanelH = math.min(headerH + #options*itemH + 8, headerH + maxVisible*itemH + 8)
-        local smallHeaderH = 30
+        -- big panel height: no header now, just items + padding
+        local bigPanelH = math.min(#options*itemH + 16, maxVisible*itemH + 16)
+        -- small panel height: height needed to show selected text (wrapped) + padding
         local selText = ""
         if multiple then
             local vals = {}
             for i,_ in pairs(selectedSet) do table.insert(vals, tostring(options[i])) end
-            if #vals == 0 then selText = "" else selText = table.concat(vals, ", ") end
+            if #vals == 0 then selText = "" else selText = "- " .. table.concat(vals, ", ") end
         else
-            if selectedIndex then selText = tostring(options[selectedIndex]) else selText = "" end
+            if selectedIndex then selText = "- " .. tostring(options[selectedIndex]) else selText = "" end
         end
-        local maxW = 260 - 12
+        local maxW = 260 - 24
         local bodyFont = Enum.Font.SourceSans
         local bodySize = 16
-        local textSize = TextService:GetTextSize(selText, bodySize, bodyFont, Vector2.new(maxW, 400))
-        local smallBodyH = math.max(16, math.ceil(textSize.Y))
-        local smallPanelH = math.max(48, smallHeaderH + smallBodyH + 8)
+        local textSize = TextService:GetTextSize(selText, bodySize, bodyFont, Vector2.new(math.max(10, maxW), 1000))
+        local smallBodyH = math.max(20, math.ceil(textSize.Y))
+        local smallPanelH = math.max(48, smallBodyH + 12)
         return smallPanelH, bigPanelH
     end
 
@@ -757,11 +757,13 @@ function tab:CreateDropdown(opts)
             local panelW = 260
             local smallH, bigH = computePanelSizes(6)
 
+            -- desired middle Y: use main divider position (dividerY offset inside Frame)
             local mdY = Frame.AbsolutePosition.Y + dividerY + 8
             local gap = 8
             local smallY = math.clamp(mdY - smallH - (gap/2), 8, screenSize.Y - smallH - 8)
             local bigY = math.clamp(mdY + (gap/2), 8, screenSize.Y - bigH - 8)
 
+            -- If overlapping, push big down
             if smallY + smallH + 6 > bigY then
                 smallY = math.clamp(frame.AbsolutePosition.Y + (frame.AbsoluteSize.Y/2) - smallH - 6, 8, screenSize.Y - smallH - 8)
                 bigY = math.clamp(smallY + smallH + 8, 8, screenSize.Y - bigH - 8)
@@ -822,10 +824,10 @@ function tab:CreateDropdown(opts)
         local panelW = 260
         local maxVisible = 6
         local itemH = 36
-        local headerH = 30
 
         local smallH, bigH = computePanelSizes(maxVisible)
 
+        -- small panel (no header)
         panelSmall = new("Frame", {Parent = screenGui, Size = UDim2.new(0, panelW, 0, smallH), BackgroundColor3 = cfg.Theme.Main, ZIndex = 220, BackgroundTransparency = 1})
         new("UICorner", {Parent = panelSmall, CornerRadius = UDim.new(0,8)})
         local smallStroke = new("UIStroke", {Parent = panelSmall})
@@ -833,15 +835,13 @@ function tab:CreateDropdown(opts)
         smallStroke.Transparency = 0.8
         smallStroke.Color = Color3.fromRGB(255,255,255)
 
-        -- header shows name clearly
-        local header = new("TextLabel", {Parent = panelSmall, Size = UDim2.new(1,-12,0,headerH-4), Position = UDim2.new(0,6,0,6), BackgroundTransparency = 1, Font = Enum.Font.SourceSansBold, TextSize = 17, Text = tostring(name), TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Center, TextColor3 = cfg.Theme.Text, ZIndex = 221})
-
-        local innerScroll = new("ScrollingFrame", {Parent = panelSmall, Name = "InnerScroll", Size = UDim2.new(1,-12,1, -headerH - 10), Position = UDim2.new(0,6,0, headerH), BackgroundTransparency = 1, ScrollBarThickness = 6, CanvasSize = UDim2.new(0,0,0,0), VerticalScrollBarInset = Enum.ScrollBarInset.Always})
+        local innerScroll = new("ScrollingFrame", {Parent = panelSmall, Name = "InnerScroll", Size = UDim2.new(1,-12,1, -12), Position = UDim2.new(0,6,0,6), BackgroundTransparency = 1, ScrollBarThickness = 6, CanvasSize = UDim2.new(0,0,0,0), VerticalScrollBarInset = Enum.ScrollBarInset.Always})
         innerScroll.AutomaticCanvasSize = Enum.AutomaticSize.None
 
         local selTextLabel = new("TextLabel", {Parent = innerScroll, Name = "SelText", Size = UDim2.new(1,0,0,16), Position = UDim2.new(0,0,0,0), BackgroundTransparency = 1, Font = Enum.Font.SourceSans, TextSize = 16, Text = "", TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, TextColor3 = cfg.Theme.Text, TextWrapped = true})
         selTextLabel.AutomaticSize = Enum.AutomaticSize.None
 
+        -- big panel (no header)
         panelBig = new("Frame", {Parent = screenGui, Size = UDim2.new(0, panelW, 0, bigH), BackgroundColor3 = cfg.Theme.Main, ZIndex = 220, BackgroundTransparency = 1})
         new("UICorner", {Parent = panelBig, CornerRadius = UDim.new(0,8)})
         local bigStroke = new("UIStroke", {Parent = panelBig})
@@ -849,9 +849,7 @@ function tab:CreateDropdown(opts)
         bigStroke.Transparency = 0.8
         bigStroke.Color = Color3.fromRGB(255,255,255)
 
-        local headerB = new("TextLabel", {Parent = panelBig, Size = UDim2.new(1,-12,0,headerH-4), Position = UDim2.new(0,6,0,6), BackgroundTransparency = 1, Font = Enum.Font.SourceSansBold, TextSize = 17, Text = tostring(name), TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Center, TextColor3 = cfg.Theme.Text, ZIndex = 221})
-
-        local contentFrame = new("ScrollingFrame", {Parent = panelBig, Size = UDim2.new(1,-12,0,bigH - headerH - 10), Position = UDim2.new(0,6,0, headerH), BackgroundTransparency = 1, ScrollBarThickness = 6, CanvasSize = UDim2.new(0,0,0,#options * itemH), VerticalScrollBarInset = Enum.ScrollBarInset.Always})
+        local contentFrame = new("ScrollingFrame", {Parent = panelBig, Size = UDim2.new(1,-12,1,-12), Position = UDim2.new(0,6,0,6), BackgroundTransparency = 1, ScrollBarThickness = 6, CanvasSize = UDim2.new(0,0,0,#options * itemH), VerticalScrollBarInset = Enum.ScrollBarInset.Always})
         contentFrame.AutomaticCanvasSize = Enum.AutomaticSize.None
         contentFrame.CanvasPosition = Vector2.new(0,0)
 
@@ -923,7 +921,7 @@ function tab:CreateDropdown(opts)
                 selectedIndex = i
                 rowBtn.BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.14)
                 rowBtn.TextColor3 = Color3.fromRGB(255,255,255)
-                -- DO NOT change btn.Text here; keep it "Select" as required
+                -- keep btn.Text as "Select"
                 updateSavedSelections()
                 if callback then pcall(callback, options[i]) end
                 if flag and window.Flags[flag] and window.Flags[flag].Set then pcall(window.Flags[flag].Set, options[i]) end
@@ -931,7 +929,7 @@ function tab:CreateDropdown(opts)
             end)
         end
 
-        -- restore previous selections if any (visuals only, do not change button text)
+        -- restore previous selections (visual only)
         pcall(function()
             local saved = window and window._savedState and window._savedState.dropdownSelections and window._savedState.dropdownSelections[uid]
             if saved and contentFrame then
@@ -1015,7 +1013,7 @@ function tab:CreateDropdown(opts)
                 refreshSmallPanelContent()
                 updateSavedSelections()
             end
-            -- Keep btn.Text = "Select" (do not change)
+            -- keep btn.Text = "Select"
         end,
         Open = showPanel,
         Close = closePanel,
