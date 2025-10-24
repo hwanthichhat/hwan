@@ -682,416 +682,366 @@ function Hwan:CreateWindow(opts)
             return sec
         end
 
-        -- Dropdown: two panels (small top shows selected, big bottom shows options)
-        function tab:CreateDropdown(opts)
-            opts = opts or {}
-            local name = opts.Name or ""
-            local options = opts.Options or opts.Choices or {}
-            local multiple = opts.MultipleOptions or false
-            local callback = opts.Callback
-            local flag = opts.Flag
+function tab:CreateDropdown(opts)
+    opts = opts or {}
+    local name = opts.Name or ""
+    local options = opts.Options or opts.Choices or {}
+    local multiple = opts.MultipleOptions or false
+    local callback = opts.Callback
+    local flag = opts.Flag
 
-            local frame = new("Frame", {Parent = content, Size = UDim2.new(1,0,0,36), BackgroundTransparency = 1})
-            new("TextLabel", {Parent = frame, Text = name, Size = UDim2.new(0.65, -8, 1, 0), Position = UDim2.new(0,8,0,0), BackgroundTransparency = 1, TextColor3 = cfg.Theme.Text, Font = Enum.Font.SourceSansBold, TextSize = 17, TextXAlignment = Enum.TextXAlignment.Left})
-            local btnWidthScale = 0.36
-            local btn = new("TextButton", {Parent = frame, Size = UDim2.new(btnWidthScale, -8, 1, 0), Position = UDim2.new(1 - btnWidthScale, 4, 0, 0), BackgroundColor3 = cfg.Theme.Btn, Text = "Select", Font = Enum.Font.SourceSansBold, TextSize = 17, TextColor3 = cfg.Theme.Text, AutoButtonColor = false, TextScaled = false, TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center})
-            new("UICorner", {Parent = btn, CornerRadius = UDim.new(0,8)})
+    local frame = new("Frame", {Parent = content, Size = UDim2.new(1,0,0,36), BackgroundTransparency = 1})
+    new("TextLabel", {Parent = frame, Text = name, Size = UDim2.new(0.65, -8, 1, 0), Position = UDim2.new(0,8,0,0), BackgroundTransparency = 1, TextColor3 = cfg.Theme.Text, Font = Enum.Font.SourceSansBold, TextSize = 17, TextXAlignment = Enum.TextXAlignment.Left})
+    local btnWidthScale = 0.36
+    local btn = new("TextButton", {Parent = frame, Size = UDim2.new(btnWidthScale, -8, 1, 0), Position = UDim2.new(1 - btnWidthScale, 4, 0, 0), BackgroundColor3 = cfg.Theme.Btn, Text = "Select", Font = Enum.Font.SourceSansBold, TextSize = 17, TextColor3 = cfg.Theme.Text, AutoButtonColor = false, TextScaled = false, TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center})
+    new("UICorner", {Parent = btn, CornerRadius = UDim.new(0,8)})
 
-            local instance
-            local uid = HttpService:GenerateGUID(false)
-            local selectedIndex = nil
-            local selectedSet = {}
+    local instance
+    local uid = HttpService:GenerateGUID(false)
+    local selectedIndex = nil
+    local selectedSet = {}
 
-            local panelSmall, panelBig, followConn
+    local panelSmall, panelBig, followConn
 
-            local function updateSavedSelections()
-                if window and window._savedState then
-                    if multiple then
-                        local selIdxs = {}
-                        for idx, _ in pairs(selectedSet) do table.insert(selIdxs, idx) end
-                        if #selIdxs > 0 then window._savedState.dropdownSelections[uid] = selIdxs else window._savedState.dropdownSelections[uid] = nil end
-                    else
-                        if selectedIndex then window._savedState.dropdownSelections[uid] = selectedIndex else window._savedState.dropdownSelections[uid] = nil end
-                    end
-                end
+    local function updateSavedSelections()
+        if window and window._savedState then
+            if multiple then
+                local selIdxs = {}
+                for idx, _ in pairs(selectedSet) do table.insert(selIdxs, idx) end
+                if #selIdxs > 0 then window._savedState.dropdownSelections[uid] = selIdxs else window._savedState.dropdownSelections[uid] = nil end
+            else
+                if selectedIndex then window._savedState.dropdownSelections[uid] = selectedIndex else window._savedState.dropdownSelections[uid] = nil end
+            end
+        end
+    end
+
+    local function closePanel()
+        if followConn then pcall(function() followConn:Disconnect() end) end
+        followConn = nil
+        if panelSmall and panelSmall.Parent then pcall(function() panelSmall:Destroy() end) end
+        if panelBig and panelBig.Parent then pcall(function() panelBig:Destroy() end) end
+        panelSmall = nil
+        panelBig = nil
+        if instance and window and window._dropdownStates then
+            window._dropdownStates[uid] = false
+        end
+    end
+
+    local function computePanelSizes(maxVisible)
+        maxVisible = maxVisible or 6
+        local itemH = 36
+        local headerH = 30
+        local bigPanelH = math.min(headerH + #options*itemH + 8, headerH + maxVisible*itemH + 8)
+        local smallHeaderH = 30
+        local selText = ""
+        if multiple then
+            local vals = {}
+            for i,_ in pairs(selectedSet) do table.insert(vals, tostring(options[i])) end
+            if #vals == 0 then selText = "" else selText = table.concat(vals, ", ") end
+        else
+            if selectedIndex then selText = tostring(options[selectedIndex]) else selText = "" end
+        end
+        local maxW = 260 - 12
+        local bodyFont = Enum.Font.SourceSans
+        local bodySize = 16
+        local textSize = TextService:GetTextSize(selText, bodySize, bodyFont, Vector2.new(maxW, 400))
+        local smallBodyH = math.max(16, math.ceil(textSize.Y))
+        local smallPanelH = math.max(48, smallHeaderH + smallBodyH + 8)
+        return smallPanelH, bigPanelH
+    end
+
+    local function updatePanelPos()
+        if not panelBig and not panelSmall then return end
+        pcall(function()
+            local screenSize = Workspace.CurrentCamera and Workspace.CurrentCamera.ViewportSize or Vector2.new(1920,1080)
+            local panelW = 260
+            local smallH, bigH = computePanelSizes(6)
+
+            local mdY = Frame.AbsolutePosition.Y + dividerY + 8
+            local gap = 8
+            local smallY = math.clamp(mdY - smallH - (gap/2), 8, screenSize.Y - smallH - 8)
+            local bigY = math.clamp(mdY + (gap/2), 8, screenSize.Y - bigH - 8)
+
+            if smallY + smallH + 6 > bigY then
+                smallY = math.clamp(frame.AbsolutePosition.Y + (frame.AbsoluteSize.Y/2) - smallH - 6, 8, screenSize.Y - smallH - 8)
+                bigY = math.clamp(smallY + smallH + 8, 8, screenSize.Y - bigH - 8)
             end
 
-            local function closePanel()
-                if followConn then pcall(function() followConn:Disconnect() end) end
-                followConn = nil
-                if panelSmall and panelSmall.Parent then
-                    pcall(function()
-                        panelSmall:Destroy()
-                    end)
-                end
-                if panelBig and panelBig.Parent then
-                    pcall(function()
-                        panelBig:Destroy()
-                    end)
-                end
-                panelSmall = nil
-                panelBig = nil
-                if instance and window and window._dropdownStates then
-                    window._dropdownStates[uid] = false
-                end
+            local x = Frame.AbsolutePosition.X + Frame.AbsoluteSize.X + 8
+            x = math.clamp(x, 8, screenSize.X - panelW - 8)
+
+            if panelSmall and panelSmall.Parent then panelSmall.Position = UDim2.new(0, x, 0, smallY) end
+            if panelBig and panelBig.Parent then panelBig.Position = UDim2.new(0, x, 0, bigY) end
+        end)
+    end
+
+    local function refreshSmallPanelContent()
+        if not panelSmall or not panelSmall.Parent then return end
+        pcall(function()
+            local content = panelSmall:FindFirstChild("InnerScroll")
+            if not content then return end
+            local txtLabel = content:FindFirstChild("SelText")
+            if not txtLabel then return end
+
+            local selText = ""
+            if multiple then
+                local vals = {}
+                for i,_ in pairs(selectedSet) do table.insert(vals, tostring(options[i])) end
+                if #vals == 0 then selText = "" else selText = "- " .. table.concat(vals, ", ") end
+            else
+                if selectedIndex then selText = "- " .. tostring(options[selectedIndex]) else selText = "" end
             end
 
-            local function computePanelSizes(maxVisible)
-                maxVisible = maxVisible or 6
-                local itemH = 36
-                local headerH = 30
-                local bigPanelH = math.min(headerH + #options*itemH + 8, headerH + maxVisible*itemH + 8)
-                local smallHeaderH = 30
-                -- small content height: compute text size of selected items; set min height
-                local selText = ""
-                if multiple then
-                    local vals = {}
-                    for i,_ in pairs(selectedSet) do
-                        table.insert(vals, tostring(options[i]))
-                    end
-                    if #vals == 0 then selText = "" else selText = table.concat(vals, ", ") end
+            txtLabel.Text = selText
+            local maxW = panelSmall.AbsoluteSize.X - 24
+            local bodyFont = Enum.Font.SourceSans
+            local bodySize = 16
+            local textSize = TextService:GetTextSize(selText, bodySize, bodyFont, Vector2.new(math.max(1, maxW), 1000))
+            local desiredH = math.max(20, math.ceil(textSize.Y))
+            txtLabel.Size = UDim2.new(1, 0, 0, desiredH)
+            content.CanvasSize = UDim2.new(0, 0, 0, desiredH)
+        end)
+    end
+
+    local function showPanel()
+        if panelBig or panelSmall then
+            closePanel()
+            return
+        end
+
+        if window and window._dropdownInstances then
+            for _, other in ipairs(window._dropdownInstances) do
+                if other ~= instance and other.IsOpen and other.IsOpen() then
+                    pcall(function() other.Close() end)
+                end
+            end
+        end
+
+        task.wait(0.02)
+
+        local panelW = 260
+        local maxVisible = 6
+        local itemH = 36
+        local headerH = 30
+
+        local smallH, bigH = computePanelSizes(maxVisible)
+
+        panelSmall = new("Frame", {Parent = screenGui, Size = UDim2.new(0, panelW, 0, smallH), BackgroundColor3 = cfg.Theme.Main, ZIndex = 220, BackgroundTransparency = 1})
+        new("UICorner", {Parent = panelSmall, CornerRadius = UDim.new(0,8)})
+        local smallStroke = new("UIStroke", {Parent = panelSmall})
+        smallStroke.Thickness = 2
+        smallStroke.Transparency = 0.8
+        smallStroke.Color = Color3.fromRGB(255,255,255)
+
+        -- header shows name clearly
+        local header = new("TextLabel", {Parent = panelSmall, Size = UDim2.new(1,-12,0,headerH-4), Position = UDim2.new(0,6,0,6), BackgroundTransparency = 1, Font = Enum.Font.SourceSansBold, TextSize = 17, Text = tostring(name), TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Center, TextColor3 = cfg.Theme.Text, ZIndex = 221})
+
+        local innerScroll = new("ScrollingFrame", {Parent = panelSmall, Name = "InnerScroll", Size = UDim2.new(1,-12,1, -headerH - 10), Position = UDim2.new(0,6,0, headerH), BackgroundTransparency = 1, ScrollBarThickness = 6, CanvasSize = UDim2.new(0,0,0,0), VerticalScrollBarInset = Enum.ScrollBarInset.Always})
+        innerScroll.AutomaticCanvasSize = Enum.AutomaticSize.None
+
+        local selTextLabel = new("TextLabel", {Parent = innerScroll, Name = "SelText", Size = UDim2.new(1,0,0,16), Position = UDim2.new(0,0,0,0), BackgroundTransparency = 1, Font = Enum.Font.SourceSans, TextSize = 16, Text = "", TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, TextColor3 = cfg.Theme.Text, TextWrapped = true})
+        selTextLabel.AutomaticSize = Enum.AutomaticSize.None
+
+        panelBig = new("Frame", {Parent = screenGui, Size = UDim2.new(0, panelW, 0, bigH), BackgroundColor3 = cfg.Theme.Main, ZIndex = 220, BackgroundTransparency = 1})
+        new("UICorner", {Parent = panelBig, CornerRadius = UDim.new(0,8)})
+        local bigStroke = new("UIStroke", {Parent = panelBig})
+        bigStroke.Thickness = 2
+        bigStroke.Transparency = 0.8
+        bigStroke.Color = Color3.fromRGB(255,255,255)
+
+        local headerB = new("TextLabel", {Parent = panelBig, Size = UDim2.new(1,-12,0,headerH-4), Position = UDim2.new(0,6,0,6), BackgroundTransparency = 1, Font = Enum.Font.SourceSansBold, TextSize = 17, Text = tostring(name), TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Center, TextColor3 = cfg.Theme.Text, ZIndex = 221})
+
+        local contentFrame = new("ScrollingFrame", {Parent = panelBig, Size = UDim2.new(1,-12,0,bigH - headerH - 10), Position = UDim2.new(0,6,0, headerH), BackgroundTransparency = 1, ScrollBarThickness = 6, CanvasSize = UDim2.new(0,0,0,#options * itemH), VerticalScrollBarInset = Enum.ScrollBarInset.Always})
+        contentFrame.AutomaticCanvasSize = Enum.AutomaticSize.None
+        contentFrame.CanvasPosition = Vector2.new(0,0)
+
+        for i, opt in ipairs(options) do
+            local rowBtn = new("TextButton", {Parent = contentFrame, Size = UDim2.new(1,0,0,itemH-6), Position = UDim2.new(0,0,0, (i-1)*itemH), BackgroundColor3 = cfg.Theme.TabBg, Text = tostring(opt), Font = Enum.Font.SourceSansBold, TextSize = 17, TextColor3 = cfg.Theme.Text, AutoButtonColor = false, ZIndex = 222})
+            new("UICorner", {Parent = rowBtn, CornerRadius = UDim.new(0,6)})
+            rowBtn.TextStrokeTransparency = 1
+
+            rowBtn.MouseEnter:Connect(function()
+                if multiple and selectedSet[i] then return end
+                if (not multiple) and selectedIndex == i then return end
+                tween(rowBtn, {BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.06)}, 0.10)
+            end)
+            rowBtn.MouseLeave:Connect(function()
+                if multiple and selectedSet[i] then
+                    tween(rowBtn, {BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.12)}, 0.10)
+                elseif (not multiple) and selectedIndex == i then
+                    tween(rowBtn, {BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.12)}, 0.10)
                 else
-                    if selectedIndex then selText = tostring(options[selectedIndex]) else selText = "" end
+                    tween(rowBtn, {BackgroundColor3 = cfg.Theme.TabBg}, 0.10)
                 end
-                local maxW = 260 - 12
-                local bodyFont = Enum.Font.SourceSans
-                local bodySize = 16
-                local textSize = TextService:GetTextSize(selText, bodySize, bodyFont, Vector2.new(maxW, 400))
-                local smallBodyH = math.max(16, math.ceil(textSize.Y))
-                local smallPanelH = math.max(48, smallHeaderH + smallBodyH + 8)
-                return smallPanelH, bigPanelH
-            end
+            end)
 
-            local function updatePanelPos()
-                if not panelBig and not panelSmall then return end
-                pcall(function()
-                    local absX = frame.AbsolutePosition.X
-                    local absY = frame.AbsolutePosition.Y
-                    local screenSize = Workspace.CurrentCamera and Workspace.CurrentCamera.ViewportSize or Vector2.new(1920,1080)
-                    local panelW = 260
-
-                    local smallH, bigH = computePanelSizes(6)
-
-                    -- compute main divider screen Y (we want it between small bottom and big top)
-                    local mdY = Frame.AbsolutePosition.Y + dividerY + 8
-
-                    -- desired center gap: place small panel above mdY and big panel below mdY
-                    local gap = 8
-                    local smallY = math.clamp(mdY - smallH - (gap/2), 8, screenSize.Y - smallH - 8)
-                    local bigY = math.clamp(mdY + (gap/2), 8, screenSize.Y - bigH - 8)
-
-                    -- If smallY + smallH > bigY (collision), fallback to stacking with small on top close to frame
-                    if smallY + smallH + 6 > bigY then
-                        smallY = math.clamp(frame.AbsolutePosition.Y + (frame.AbsoluteSize.Y/2) - smallH - 6, 8, screenSize.Y - smallH - 8)
-                        bigY = math.clamp(smallY + smallH + 8, 8, screenSize.Y - bigH - 8)
-                    end
-
-                    local x = Frame.AbsolutePosition.X + Frame.AbsoluteSize.X + 8
-                    x = math.clamp(x, 8, screenSize.X - panelW - 8)
-
-                    if panelSmall and panelSmall.Parent then
-                        panelSmall.Position = UDim2.new(0, x, 0, smallY)
-                    end
-                    if panelBig and panelBig.Parent then
-                        panelBig.Position = UDim2.new(0, x, 0, bigY)
-                    end
-                end)
-            end
-
-            local function refreshSmallPanelContent()
-                if not panelSmall or not panelSmall.Parent then return end
-                pcall(function()
-                    local content = panelSmall:FindFirstChild("InnerScroll")
-                    if not content then return end
-                    local txtLabel = content:FindFirstChild("SelText")
-                    if not txtLabel then return end
-
-                    local selText = ""
-                    if multiple then
-                        local vals = {}
-                        for i,_ in pairs(selectedSet) do
-                            table.insert(vals, tostring(options[i]))
-                        end
-                        if #vals == 0 then selText = "" else selText = "- " .. table.concat(vals, ", ") end
+            rowBtn.MouseButton1Click:Connect(function()
+                if multiple then
+                    if selectedSet[i] then
+                        selectedSet[i] = nil
+                        rowBtn.BackgroundColor3 = cfg.Theme.TabBg
+                        rowBtn.TextColor3 = cfg.Theme.Text
                     else
-                        if selectedIndex then selText = "- " .. tostring(options[selectedIndex]) else selText = "" end
+                        selectedSet[i] = true
+                        rowBtn.BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.14)
+                        rowBtn.TextColor3 = Color3.fromRGB(255,255,255)
                     end
 
-                    txtLabel.Text = selText
-                    -- measure and set canvas size
-                    local maxW = panelSmall.AbsoluteSize.X - 24
-                    local bodyFont = Enum.Font.SourceSans
-                    local bodySize = 16
-                    local textSize = TextService:GetTextSize(selText, bodySize, bodyFont, Vector2.new(math.max(1, maxW), 1000))
-                    local desiredH = math.max(20, math.ceil(textSize.Y))
-                    txtLabel.Size = UDim2.new(1, 0, 0, desiredH)
-                    content.CanvasSize = UDim2.new(0, 0, 0, desiredH)
-                end)
-            end
+                    refreshSmallPanelContent()
+                    updateSavedSelections()
 
-            local function showPanel()
-                if panelBig or panelSmall then
-                    closePanel()
+                    if callback then
+                        local copy = {}
+                        for idx,_ in pairs(selectedSet) do table.insert(copy, options[idx]) end
+                        pcall(callback, copy)
+                    end
+                    if flag and window.Flags[flag] and window.Flags[flag].Set then
+                        local vals = {}
+                        for idx,_ in pairs(selectedSet) do table.insert(vals, options[idx]) end
+                        pcall(window.Flags[flag].Set, vals)
+                    end
                     return
                 end
 
-                if window and window._dropdownInstances then
-                    for _, other in ipairs(window._dropdownInstances) do
-                        if other ~= instance and other.IsOpen and other.IsOpen() then
-                            pcall(function() other.Close() end)
-                        end
+                if selectedIndex == i then
+                    selectedIndex = nil
+                    rowBtn.BackgroundColor3 = cfg.Theme.TabBg
+                    rowBtn.TextColor3 = cfg.Theme.Text
+                    updateSavedSelections()
+                    if callback then pcall(callback, nil) end
+                    if flag and window.Flags[flag] and window.Flags[flag].Set then pcall(window.Flags[flag].Set, nil) end
+                    refreshSmallPanelContent()
+                    return
+                end
+
+                for _, child in ipairs(contentFrame:GetChildren()) do
+                    if child:IsA("TextButton") then
+                        pcall(function() child.BackgroundColor3 = cfg.Theme.TabBg; child.TextColor3 = cfg.Theme.Text end)
                     end
                 end
 
-                task.wait(0.02)
-
-                -- create small panel (top) and big panel (bottom)
-                local panelW = 260
-                local maxVisible = 6
-                local itemH = 36
-                local headerH = 30
-
-                -- compute heights based on current selections
-                local smallH, bigH = computePanelSizes(maxVisible)
-
-                panelSmall = new("Frame", {Parent = screenGui, Size = UDim2.new(0, panelW, 0, smallH), BackgroundColor3 = cfg.Theme.Main, ZIndex = 220, BackgroundTransparency = 1})
-                new("UICorner", {Parent = panelSmall, CornerRadius = UDim.new(0,8)})
-                local smallStroke = new("UIStroke", {Parent = panelSmall})
-                smallStroke.Thickness = 2
-                smallStroke.Transparency = 0.8
-                smallStroke.Color = Color3.fromRGB(255,255,255)
-
-                local header = new("TextLabel", {Parent = panelSmall, Size = UDim2.new(1,-12,0,headerH-4), Position = UDim2.new(0,6,0,6), BackgroundTransparency = 1, Font = Enum.Font.SourceSansBold, TextSize = 17, Text = name or "", TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Center, TextColor3 = cfg.Theme.Text, ZIndex = 221})
-
-                local innerScroll = new("ScrollingFrame", {Parent = panelSmall, Name = "InnerScroll", Size = UDim2.new(1,-12,1, -headerH - 10), Position = UDim2.new(0,6,0, headerH), BackgroundTransparency = 1, ScrollBarThickness = 6, CanvasSize = UDim2.new(0,0,0,0), VerticalScrollBarInset = Enum.ScrollBarInset.Always})
-                innerScroll.AutomaticCanvasSize = Enum.AutomaticSize.None
-
-                local selTextLabel = new("TextLabel", {Parent = innerScroll, Name = "SelText", Size = UDim2.new(1,0,0,16), Position = UDim2.new(0,0,0,0), BackgroundTransparency = 1, Font = Enum.Font.SourceSans, TextSize = 16, Text = "", TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, TextColor3 = cfg.Theme.Text, TextWrapped = true})
-                selTextLabel.AutomaticSize = Enum.AutomaticSize.None
-
-                -- big panel (options)
-                panelBig = new("Frame", {Parent = screenGui, Size = UDim2.new(0, panelW, 0, bigH), BackgroundColor3 = cfg.Theme.Main, ZIndex = 220, BackgroundTransparency = 1})
-                new("UICorner", {Parent = panelBig, CornerRadius = UDim.new(0,8)})
-                local bigStroke = new("UIStroke", {Parent = panelBig})
-                bigStroke.Thickness = 2
-                bigStroke.Transparency = 0.8
-                bigStroke.Color = Color3.fromRGB(255,255,255)
-
-                local headerB = new("TextLabel", {Parent = panelBig, Size = UDim2.new(1,-12,0,headerH-4), Position = UDim2.new(0,6,0,6), BackgroundTransparency = 1, Font = Enum.Font.SourceSansBold, TextSize = 17, Text = name or "", TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Center, TextColor3 = cfg.Theme.Text, ZIndex = 221})
-
-                local contentFrame = new("ScrollingFrame", {Parent = panelBig, Size = UDim2.new(1,-12,0,bigH - headerH - 10), Position = UDim2.new(0,6,0, headerH), BackgroundTransparency = 1, ScrollBarThickness = 6, CanvasSize = UDim2.new(0,0,0,#options * itemH), VerticalScrollBarInset = Enum.ScrollBarInset.Always})
-                contentFrame.AutomaticCanvasSize = Enum.AutomaticSize.None
-                contentFrame.CanvasPosition = Vector2.new(0,0)
-
-                -- create option rows
-                for i, opt in ipairs(options) do
-                    local rowBtn = new("TextButton", {Parent = contentFrame, Size = UDim2.new(1,0,0,itemH-6), Position = UDim2.new(0,0,0, (i-1)*itemH), BackgroundColor3 = cfg.Theme.TabBg, Text = tostring(opt), Font = Enum.Font.SourceSansBold, TextSize = 17, TextColor3 = cfg.Theme.Text, AutoButtonColor = false, ZIndex = 222})
-                    new("UICorner", {Parent = rowBtn, CornerRadius = UDim.new(0,6)})
-                    rowBtn.TextStrokeTransparency = 1
-
-                    rowBtn.MouseEnter:Connect(function()
-                        if multiple and selectedSet[i] then return end
-                        if (not multiple) and selectedIndex == i then return end
-                        tween(rowBtn, {BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.06)}, 0.10)
-                    end)
-                    rowBtn.MouseLeave:Connect(function()
-                        if multiple and selectedSet[i] then
-                            tween(rowBtn, {BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.12)}, 0.10)
-                        elseif (not multiple) and selectedIndex == i then
-                            tween(rowBtn, {BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.12)}, 0.10)
-                        else
-                            tween(rowBtn, {BackgroundColor3 = cfg.Theme.TabBg}, 0.10)
-                        end
-                    end)
-
-                    rowBtn.MouseButton1Click:Connect(function()
-                        if multiple then
-                            if selectedSet[i] then
-                                selectedSet[i] = nil
-                                rowBtn.BackgroundColor3 = cfg.Theme.TabBg
-                                rowBtn.TextColor3 = cfg.Theme.Text
-                            else
-                                selectedSet[i] = true
-                                rowBtn.BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.14)
-                                rowBtn.TextColor3 = Color3.fromRGB(255,255,255)
-                            end
-
-                            -- update small panel text
-                            refreshSmallPanelContent()
-                            updateSavedSelections()
-
-                            -- callback with copy
-                            if callback then
-                                local copy = {}
-                                for idx,_ in pairs(selectedSet) do
-                                    table.insert(copy, options[idx])
-                                end
-                                pcall(callback, copy)
-                            end
-                            if flag and window.Flags[flag] and window.Flags[flag].Set then
-                                local vals = {}
-                                for idx,_ in pairs(selectedSet) do table.insert(vals, options[idx]) end
-                                pcall(window.Flags[flag].Set, vals)
-                            end
-                            return
-                        end
-
-                        -- single select
-                        if selectedIndex == i then
-                            selectedIndex = nil
-                            rowBtn.BackgroundColor3 = cfg.Theme.TabBg
-                            rowBtn.TextColor3 = cfg.Theme.Text
-                            btn.Text = "Select"
-                            updateSavedSelections()
-                            if callback then pcall(callback, nil) end
-                            if flag and window.Flags[flag] and window.Flags[flag].Set then pcall(window.Flags[flag].Set, nil) end
-                            refreshSmallPanelContent()
-                            return
-                        end
-
-                        -- clear others
-                        for _, child in ipairs(contentFrame:GetChildren()) do
-                            if child:IsA("TextButton") then
-                                pcall(function() child.BackgroundColor3 = cfg.Theme.TabBg; child.TextColor3 = cfg.Theme.Text end)
-                            end
-                        end
-
-                        selectedIndex = i
-                        rowBtn.BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.14)
-                        rowBtn.TextColor3 = Color3.fromRGB(255,255,255)
-                        btn.Text = "Select"
-                        updateSavedSelections()
-                        if callback then pcall(callback, options[i]) end
-                        if flag and window.Flags[flag] and window.Flags[flag].Set then pcall(window.Flags[flag].Set, options[i]) end
-                        refreshSmallPanelContent()
-                    end)
-                end
-
-                -- restore previous selections if any
-                pcall(function()
-                    local saved = window and window._savedState and window._savedState.dropdownSelections and window._savedState.dropdownSelections[uid]
-                    if saved and contentFrame then
-                        if multiple and type(saved) == "table" then
-                            for _, idx in ipairs(saved) do selectedSet[idx] = true end
-                            -- mark visuals
-                            for childI, child in ipairs(contentFrame:GetChildren()) do
-                                if child:IsA("TextButton") then
-                                    local i = childI
-                                    if selectedSet[i] then
-                                        child.BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.14)
-                                        child.TextColor3 = Color3.fromRGB(255,255,255)
-                                    else
-                                        child.BackgroundColor3 = cfg.Theme.TabBg
-                                        child.TextColor3 = cfg.Theme.Text
-                                    end
-                                end
-                            end
-                        elseif (type(saved) == "number") then
-                            local idx = saved
-                            local children = contentFrame:GetChildren()
-                            for childI, child in ipairs(children) do
-                                if child:IsA("TextButton") then
-                                    if childI == idx then
-                                        child.BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.14)
-                                        child.TextColor3 = Color3.fromRGB(255,255,255)
-                                        selectedIndex = idx
-                                    else
-                                        child.BackgroundColor3 = cfg.Theme.TabBg
-                                        child.TextColor3 = cfg.Theme.Text
-                                    end
-                                end
-                            end
-                            if selectedIndex then btn.Text = "Select" end
-                        end
-                    end
-                end)
-
-                -- initial small content
+                selectedIndex = i
+                rowBtn.BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.14)
+                rowBtn.TextColor3 = Color3.fromRGB(255,255,255)
+                -- DO NOT change btn.Text here; keep it "Select" as required
+                updateSavedSelections()
+                if callback then pcall(callback, options[i]) end
+                if flag and window.Flags[flag] and window.Flags[flag].Set then pcall(window.Flags[flag].Set, options[i]) end
                 refreshSmallPanelContent()
-
-                -- fade in animations
-                panelSmall.BackgroundTransparency = 1
-                panelBig.BackgroundTransparency = 1
-                tween(panelSmall, {BackgroundTransparency = 0}, 0.18)
-                tween(panelBig, {BackgroundTransparency = 0}, 0.18)
-
-                -- update pos immediately and on heartbeat
-                updatePanelPos()
-                if not followConn then
-                    followConn = RunService.Heartbeat:Connect(function()
-                        pcall(updatePanelPos)
-                    end)
-                end
-
-                -- mark open state
-                if instance and window and window._dropdownStates then window._dropdownStates[uid] = true end
-            end
-
-            local opening = false
-            local openConn = btn.MouseButton1Click:Connect(function()
-                if opening then return end
-                opening = true
-                pcall(showPanel)
-                task.wait(0.02)
-                opening = false
             end)
-            addConn(openConn)
-
-            instance = {
-                UI = frame,
-                Set = function(v)
-                    -- v can be string or table or index -> simply display in btn text (but requirement: keep "Select")
-                    -- Keep fixed "Select" as per request; but allow programmatic updates to saved state:
-                    if type(v) == "table" then
-                        -- try to set selectedSet by matching values
-                        for i,opt in ipairs(options) do
-                            for _, val in ipairs(v) do
-                                if tostring(opt) == tostring(val) then selectedSet[i] = true end
-                            end
-                        end
-                        refreshSmallPanelContent()
-                        updateSavedSelections()
-                    elseif type(v) == "number" then
-                        selectedIndex = v
-                        updateSavedSelections()
-                        refreshSmallPanelContent()
-                    elseif type(v) == "string" then
-                        -- find option match
-                        for i,opt in ipairs(options) do
-                            if tostring(opt) == v then
-                                selectedIndex = i
-                                break
-                            end
-                        end
-                        updateSavedSelections()
-                        refreshSmallPanelContent()
-                    end
-                end,
-                Open = showPanel,
-                Close = closePanel,
-                IsOpen = function() return (panelBig ~= nil) or (panelSmall ~= nil) end,
-                Button = btn,
-                uid = uid,
-                Flag = flag
-            }
-
-            if flag and type(flag) == "string" then
-                registerFlag(flag, { Type = "Dropdown", Get = function() return btn.Text end, Set = function(v) btn.Text = tostring(v) end, UI = frame })
-            end
-
-            if window then
-                window._dropdownInstances = window._dropdownInstances or {}
-                table.insert(window._dropdownInstances, instance)
-                window._dropdownStates = window._dropdownStates or {}
-                window._dropdownStates[uid] = false
-                window._savedState = window._savedState or {}
-                window._savedState.dropdownSelections = window._savedState.dropdownSelections or {}
-            end
-
-            pcall(hideTextNodesIn, frame)
-            task.defer(function() pcall(updateContentCanvas) end)
-            return instance
         end
+
+        -- restore previous selections if any (visuals only, do not change button text)
+        pcall(function()
+            local saved = window and window._savedState and window._savedState.dropdownSelections and window._savedState.dropdownSelections[uid]
+            if saved and contentFrame then
+                if multiple and type(saved) == "table" then
+                    for _, idx in ipairs(saved) do selectedSet[idx] = true end
+                    for childI, child in ipairs(contentFrame:GetChildren()) do
+                        if child:IsA("TextButton") then
+                            local i = childI
+                            if selectedSet[i] then
+                                child.BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.14)
+                                child.TextColor3 = Color3.fromRGB(255,255,255)
+                            else
+                                child.BackgroundColor3 = cfg.Theme.TabBg
+                                child.TextColor3 = cfg.Theme.Text
+                            end
+                        end
+                    end
+                elseif (type(saved) == "number") then
+                    local idx = saved
+                    local children = contentFrame:GetChildren()
+                    for childI, child in ipairs(children) do
+                        if child:IsA("TextButton") then
+                            if childI == idx then
+                                child.BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.14)
+                                child.TextColor3 = Color3.fromRGB(255,255,255)
+                                selectedIndex = idx
+                            else
+                                child.BackgroundColor3 = cfg.Theme.TabBg
+                                child.TextColor3 = cfg.Theme.Text
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+
+        refreshSmallPanelContent()
+
+        panelSmall.BackgroundTransparency = 1
+        panelBig.BackgroundTransparency = 1
+        tween(panelSmall, {BackgroundTransparency = 0}, 0.18)
+        tween(panelBig, {BackgroundTransparency = 0}, 0.18)
+
+        updatePanelPos()
+        if not followConn then
+            followConn = RunService.Heartbeat:Connect(function() pcall(updatePanelPos) end)
+        end
+
+        if instance and window and window._dropdownStates then window._dropdownStates[uid] = true end
+    end
+
+    local opening = false
+    local openConn = btn.MouseButton1Click:Connect(function()
+        if opening then return end
+        opening = true
+        pcall(showPanel)
+        task.wait(0.02)
+        opening = false
+    end)
+    addConn(openConn)
+
+    instance = {
+        UI = frame,
+        Set = function(v)
+            if type(v) == "table" then
+                for i,opt in ipairs(options) do
+                    for _, val in ipairs(v) do
+                        if tostring(opt) == tostring(val) then selectedSet[i] = true end
+                    end
+                end
+                refreshSmallPanelContent()
+                updateSavedSelections()
+            elseif type(v) == "number" then
+                selectedIndex = v
+                refreshSmallPanelContent()
+                updateSavedSelections()
+            elseif type(v) == "string" then
+                for i,opt in ipairs(options) do
+                    if tostring(opt) == v then selectedIndex = i; break end
+                end
+                refreshSmallPanelContent()
+                updateSavedSelections()
+            end
+            -- Keep btn.Text = "Select" (do not change)
+        end,
+        Open = showPanel,
+        Close = closePanel,
+        IsOpen = function() return (panelBig ~= nil) or (panelSmall ~= nil) end,
+        Button = btn,
+        uid = uid,
+        Flag = flag
+    }
+
+    if flag and type(flag) == "string" then
+        registerFlag(flag, { Type = "Dropdown", Get = function() return nil end, Set = function(v) end, UI = frame })
+    end
+
+    if window then
+        window._dropdownInstances = window._dropdownInstances or {}
+        table.insert(window._dropdownInstances, instance)
+        window._dropdownStates = window._dropdownStates or {}
+        window._dropdownStates[uid] = false
+        window._savedState = window._savedState or {}
+        window._savedState.dropdownSelections = window._savedState.dropdownSelections or {}
+    end
+
+    pcall(hideTextNodesIn, frame)
+    task.defer(function() pcall(updateContentCanvas) end)
+    return instance
+end
 
         function tab:CreateKeybind(opts)
             opts = opts or {}
