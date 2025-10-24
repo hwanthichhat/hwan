@@ -1,5 +1,11 @@
--- Hwan (Hwan UI library) - Updated with fixes per user request
--- Changes summarized in conversation.
+-- Hwan (Hwan UI library) - Fixed version
+-- Patches:
+--  - Ensure math.clamp exists
+--  - Dropdown: stable restore via rowButtons + LayoutOrder
+--  - Dropdown: set _dropdownStates true when opening
+--  - Dropdown instance.Set updates button text
+--  - Add dynamic connections into conns (keybind, slider)
+--  - Minor safety / cleanup improvements
 
 local Hwan = {}
 Hwan.__index = Hwan
@@ -76,6 +82,8 @@ local function tween(inst, props, time, style, dir)
 end
 
 local function clampVal(v,a,b) if v < a then return a end if v > b then return b end return v end
+math.clamp = clampVal
+
 local function brightenColor(c, amt)
     amt = amt or 0.06
     return Color3.new(clampVal(c.R + amt, 0, 1), clampVal(c.G + amt, 0, 1), clampVal(c.B + amt, 0, 1))
@@ -796,10 +804,16 @@ function Hwan:CreateWindow(opts)
                 contentFrame.AutomaticCanvasSize = Enum.AutomaticSize.None
                 contentFrame.CanvasPosition = Vector2.new(0,0)
 
+                -- mark dropdown as open in state map
+                if window and window._dropdownStates then window._dropdownStates[uid] = true end
+
+                local rowButtons = {}
+
                 for i, opt in ipairs(options) do
-                    local rowBtn = new("TextButton", {Parent = contentFrame, Size = UDim2.new(1,0,0,itemH-6), Position = UDim2.new(0,0,0, (i-1)*itemH), BackgroundColor3 = cfg.Theme.TabBg, Text = tostring(opt), Font = Enum.Font.SourceSansBold, TextSize = 17, TextColor3 = cfg.Theme.Text, AutoButtonColor = false, ZIndex = 222})
+                    local rowBtn = new("TextButton", {Parent = contentFrame, Size = UDim2.new(1,0,0,itemH-6), Position = UDim2.new(0,0,0, (i-1)*itemH), BackgroundColor3 = cfg.Theme.TabBg, Text = tostring(opt), Font = Enum.Font.SourceSansBold, TextSize = 17, TextColor3 = cfg.Theme.Text, AutoButtonColor = false, ZIndex = 222, LayoutOrder = i})
                     new("UICorner", {Parent = rowBtn, CornerRadius = UDim.new(0,6)})
                     rowBtn.TextStrokeTransparency = 1
+                    rowButtons[i] = rowBtn
 
                     rowBtn.MouseEnter:Connect(function()
                         if selectedIndex == i then return end
@@ -894,42 +908,38 @@ function Hwan:CreateWindow(opts)
                     end)
                 end
 
-                -- restore previous selection(s)
+                -- restore previous selection(s) using rowButtons to preserve indices
                 pcall(function()
                     local saved = window and window._savedState and window._savedState.dropdownSelections and window._savedState.dropdownSelections[uid]
                     if saved and contentFrame then
                         if multiple and type(saved) == "table" then
                             for _, idx in ipairs(saved) do selectedSet[idx] = true end
                             local selVals = {}
-                            local children = contentFrame:GetChildren()
-                            table.sort(children, function(a,b) return a.LayoutOrder < b.LayoutOrder end)
-                            for childI, child in ipairs(children) do
-                                if child:IsA("TextButton") then
-                                    local i = childI
+                            for i, btn in ipairs(rowButtons) do
+                                if btn and btn:IsA("TextButton") then
                                     if selectedSet[i] then
-                                        child.BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.14)
-                                        child.TextColor3 = Color3.fromRGB(255,255,255)
+                                        btn.BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.14)
+                                        btn.TextColor3 = Color3.fromRGB(255,255,255)
                                         table.insert(selVals, options[i])
                                     else
-                                        child.BackgroundColor3 = cfg.Theme.TabBg
-                                        child.TextColor3 = cfg.Theme.Text
+                                        btn.BackgroundColor3 = cfg.Theme.TabBg
+                                        btn.TextColor3 = cfg.Theme.Text
                                     end
                                 end
                             end
                             updateSelectedPanelDisplay(selVals)
                         elseif (type(saved) == "number") then
                             local idx = saved
-                            local children = contentFrame:GetChildren()
-                            for childI, child in ipairs(children) do
-                                if child:IsA("TextButton") then
-                                    if childI == idx then
-                                        child.BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.14)
-                                        child.TextColor3 = Color3.fromRGB(255,255,255)
+                            for i, btn in ipairs(rowButtons) do
+                                if btn and btn:IsA("TextButton") then
+                                    if i == idx then
+                                        btn.BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.14)
+                                        btn.TextColor3 = Color3.fromRGB(255,255,255)
                                         updateSelectedPanelDisplay({options[idx]})
                                         selectedIndex = idx
                                     else
-                                        child.BackgroundColor3 = cfg.Theme.TabBg
-                                        child.TextColor3 = cfg.Theme.Text
+                                        btn.BackgroundColor3 = cfg.Theme.TabBg
+                                        btn.TextColor3 = cfg.Theme.Text
                                     end
                                 end
                             end
@@ -985,7 +995,26 @@ function Hwan:CreateWindow(opts)
             end)
             addConn(openConn)
 
-            instance = { UI = frame, Set = function(v) btn.Text = "Select" end, Open = showPanel, Close = closePanel, IsOpen = function() return (panel ~= nil) end, Button = btn, uid = uid, Flag = flag }
+            instance = {
+                UI = frame,
+                Set = function(v)
+                    if multiple then
+                        if type(v) == "table" and #v > 0 then
+                            btn.Text = tostring(#v) .. " selected"
+                        else
+                            btn.Text = "Select"
+                        end
+                    else
+                        if v == nil then btn.Text = "Select" else btn.Text = tostring(v) end
+                    end
+                end,
+                Open = showPanel,
+                Close = closePanel,
+                IsOpen = function() return (panel ~= nil) end,
+                Button = btn,
+                uid = uid,
+                Flag = flag
+            }
 
             if flag and type(flag) == "string" then
                 registerFlag(flag, { Type = "Dropdown", Get = function() return nil end, Set = function(v) end, UI = frame })
@@ -1076,6 +1105,7 @@ function Hwan:CreateWindow(opts)
                         return
                     end
                 end)
+                addConn(inputConn)
 
                 -- cancel binding if user clicks left mouse anywhere outside the btn
                 cancelClickConn = UserInputService.InputBegan:Connect(function(inp, gp)
@@ -1089,6 +1119,7 @@ function Hwan:CreateWindow(opts)
                         end
                     end
                 end)
+                addConn(cancelClickConn)
             end
 
             addConn(btn.MouseButton1Click:Connect(function()
@@ -1277,6 +1308,7 @@ function Hwan:CreateWindow(opts)
                             setFromPercent(pct, true)
                         end
                     end)
+                    addConn(inputChangedConn)
 
                     local endedConn
                     endedConn = input.Changed:Connect(function()
@@ -1299,6 +1331,7 @@ function Hwan:CreateWindow(opts)
                             end)
                         end
                     end)
+                    addConn(endedConn)
                 end
             end
 
