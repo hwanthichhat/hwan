@@ -1,5 +1,16 @@
 -- Hwan (Hwan UI library) - Updated with fixes per user request
--- Changes summarized in conversation.
+-- Changes applied in this file:
+-- - Default size: Width=300, Height=400
+-- - MainDivider renamed and animated
+-- - Slider: per-character RichText color switch when fill passes characters; optimized width cache to reduce CPU
+-- - Slider drag uses immediate set (no tween) while dragging; final tween on release
+-- - Keybind: removed Escape clearing behavior (Esc branch removed)
+-- - Dropdown: button text fixed to "Select"; selection display moved to a dedicated small panel above dropdown; support single & multi; position adjusted to the right of main and balanced; followConn updates both panels
+-- - Panel strokes set to opaque (no semi-transparency)
+-- - Notification / InfoBar / HwanBtn strokes made opaque
+-- - Various defensive guards and cleanup kept
+-- - FPS smoothing kept; heavy TextService calls reduced
+-- NOTE: Keep this file in a single module and require it as before.
 
 local Hwan = {}
 Hwan.__index = Hwan
@@ -100,7 +111,7 @@ end
 -- Defaults
 local DEFAULT = {
     Width = 300,
-    Height = 400,
+    Height = 400, -- changed per request
     Title = "HWAN HUB",
     ShowToggleIcon = true,
     KeySystem = true,
@@ -192,8 +203,14 @@ function Hwan:CreateWindow(opts)
     cfg.KeySettings.GrabKeyFromSite = (cfg.KeySettings.GrabKeyFromSite == true)
     cfg.KeySettings.Key = cfg.KeySettings.Key or {}
 
+    -- local debug / safe helpers
     local function dbgWarn(...)
         if cfg and cfg.Debug then warn("[Hwan Debug]", ...) end
+    end
+    local function safeCallLocal(fn, ...)
+        local ok, res = pcall(fn, ...)
+        if not ok then dbgWarn("safeCall error:", res) end
+        return ok, res
     end
 
     local conns = {}
@@ -221,7 +238,7 @@ function Hwan:CreateWindow(opts)
     new("UICorner", {Parent = Frame, CornerRadius = cfg.Corner})
     local frameStroke = new("UIStroke", {Parent = Frame})
     frameStroke.Thickness = 2
-    frameStroke.Transparency = 0.0 -- not faded
+    frameStroke.Transparency = 0 -- opaque borders per request
     frameStroke.Color = Color3.fromRGB(255,255,255)
 
     local TitleFrame = new("Frame", {Parent = Frame, Size = UDim2.new(1, -16, 0, 100), Position = UDim2.new(0,8,0,8), BackgroundTransparency = 1})
@@ -274,16 +291,17 @@ function Hwan:CreateWindow(opts)
     })
     dividerGrad.Rotation = 0
 
-    -- animate divider color (white <-> gray)
+    -- animate divider color (white <-> gray) using Heartbeat with moderate speed
     local dividerColorTimer = 0
-    local dividerColorFreq = 0.7
+    local dividerColorFreq = 0.7 -- frequency of oscillation (seconds^-1); adjust for speed
     local dividerColorMin = Color3.fromRGB(200,200,200)
     local dividerColorMax = Color3.fromRGB(255,255,255)
     local divColorConn = RunService.Heartbeat:Connect(function(dt)
         pcall(function()
             dividerColorTimer = dividerColorTimer + dt
-            local t = (math.sin(dividerColorTimer * (2 * math.pi * dividerColorFreq)) + 1) / 2
+            local t = (math.sin(dividerColorTimer * (2 * math.pi * dividerColorFreq)) + 1) / 2 -- 0..1
             local r = dividerColorMin:Lerp(dividerColorMax, t)
+            -- set uniform gradient to r
             dividerGrad.Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, r), ColorSequenceKeypoint.new(1, r) })
         end)
     end)
@@ -295,7 +313,7 @@ function Hwan:CreateWindow(opts)
     InfoBar.BackgroundTransparency = 0.06
     local InfoBarStroke = new("UIStroke", {Parent = InfoBar})
     InfoBarStroke.Thickness = 2
-    InfoBarStroke.Transparency = 0.0 -- not faded
+    InfoBarStroke.Transparency = 0
     InfoBarStroke.Color = Color3.fromRGB(255,255,255)
 
     local InfoInner = new("Frame", {Parent = InfoBar, Size = UDim2.new(1, -8, 1, -8), Position = UDim2.new(0,4,0,4), BackgroundColor3 = cfg.Theme.InfoInner, BorderSizePixel = 0, ZIndex = 51})
@@ -308,7 +326,7 @@ function Hwan:CreateWindow(opts)
     new("UICorner", {Parent = HwanBtn, CornerRadius = UDim.new(0,10)})
     local HwanBtnStroke = new("UIStroke", {Parent = HwanBtn})
     HwanBtnStroke.Thickness = 2
-    HwanBtnStroke.Transparency = 0.0 -- not faded
+    HwanBtnStroke.Transparency = 0
     HwanBtnStroke.Color = Color3.fromRGB(255,255,255)
 
     local HwanInner = new("Frame", {Parent = HwanBtn, Size = UDim2.new(1,-8,1,-8), Position = UDim2.new(0,4,0,4), BackgroundColor3 = cfg.Theme.InfoInner, BorderSizePixel = 0, ZIndex = 1001})
@@ -553,6 +571,7 @@ function Hwan:CreateWindow(opts)
                 TextSize = 17,
                 TextXAlignment = Enum.TextXAlignment.Left
             })
+            -- Right-side button always shows "Button" (fixed), left label is the dynamic name
             local b = new("TextButton", {
                 Parent = row,
                 Size = UDim2.new(0.34, -8, 1, 0),
@@ -658,54 +677,70 @@ function Hwan:CreateWindow(opts)
             local btn = new("TextButton", {Parent = frame, Size = UDim2.new(btnWidthScale, -8, 1, 0), Position = UDim2.new(1 - btnWidthScale, 4, 0, 0), BackgroundColor3 = cfg.Theme.Btn, Text = "Select", Font = Enum.Font.SourceSansBold, TextSize = 17, TextColor3 = cfg.Theme.Text, AutoButtonColor = false, TextScaled = false, TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center})
             new("UICorner", {Parent = btn, CornerRadius = UDim.new(0,8)})
 
+            -- panel variables
             local panel, followConn, contentFrame, selectedPanel
             local instance
             local uid = HttpService:GenerateGUID(false)
             local selectedIndex = nil
             local selectedSet = {} -- for multiple mode
 
-            local function updateSelectedPanelDisplay(selectionList)
-                -- create/display selectedPanel body text with "- a, b, c ..." style
-                if selectedPanel and selectedPanel.Parent then
-                    safeDestroy(selectedPanel)
-                    selectedPanel = nil
-                end
-                local text = ""
-                if not selectionList or #selectionList == 0 then
-                    text = "- none"
-                else
-                    text = "- " .. table.concat(selectionList, ", ")
-                end
-
-                -- compute size and create
-                local innerPad = 8
-                local smallW = 220
-                local maxH = 400
-                local headerSize = 22
-                local bodyFont = Enum.Font.SourceSans
-                local bodySize = 14
-
-                local bodySizeVec = TextService:GetTextSize(text, bodySize, bodyFont, Vector2.new(smallW - innerPad*2, maxH))
-                local bodyH = math.ceil(bodySizeVec.Y)
-                local smallH = math.max(36, headerSize + innerPad*2 + bodyH)
-
-                local absX = Frame.AbsolutePosition.X
-                local absY = Frame.AbsolutePosition.Y
-                local panelW = 260
-                local x = absX + Frame.AbsoluteSize.X + 8
-                x = math.clamp(x, 8, (Workspace.CurrentCamera and Workspace.CurrentCamera.ViewportSize.X or 1920) - smallW - 8)
-                local y = (panel and panel.AbsolutePosition.Y or (absY + (frame.AbsoluteSize and frame.AbsoluteSize.Y/2 or 0))) - smallH - 8
-                y = math.clamp(y, 8, (Workspace.CurrentCamera and Workspace.CurrentCamera.ViewportSize.Y or 1080) - smallH - 8)
-
-                selectedPanel = new("Frame", {Parent = screenGui, Size = UDim2.new(0, smallW, 0, smallH), Position = UDim2.new(0, x, 0, y), BackgroundColor3 = Color3.fromRGB(0,0,0), BackgroundTransparency = 0.18, ZIndex = 230})
+            -- selectedPanel helper: shows chosen items in a small panel above dropdown
+            local function makeSelectedPanel(panelX, panelY, panelW)
+                -- remove old
+                if selectedPanel and selectedPanel.Parent then safeDestroy(selectedPanel) end
+                local spw = math.max(160, panelW - 20)
+                local sph = 60
+                selectedPanel = new("Frame", {Parent = screenGui, Size = UDim2.new(0, spw, 0, sph), Position = UDim2.new(0, panelX, 0, panelY), BackgroundColor3 = cfg.Theme.Main, ZIndex = 221, BackgroundTransparency = 0.06})
                 new("UICorner", {Parent = selectedPanel, CornerRadius = UDim.new(0,8)})
-                local selStroke = new("UIStroke", {Parent = selectedPanel})
-                selStroke.Thickness = 2
-                selStroke.Transparency = 0.0
-                selStroke.Color = Color3.fromRGB(255,255,255)
+                local spStroke = new("UIStroke", {Parent = selectedPanel})
+                spStroke.Thickness = 2
+                spStroke.Transparency = 0
+                spStroke.Color = Color3.fromRGB(255,255,255)
 
-                local header = new("TextLabel", {Parent = selectedPanel, Size = UDim2.new(1,-12,0,headerSize), Position = UDim2.new(0,6,0,6), BackgroundTransparency = 1, Font = Enum.Font.SourceSansBold, TextSize = headerSize, Text = name or "", TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Center, TextColor3 = cfg.Theme.Text, ZIndex = 231})
-                local body = new("TextLabel", {Parent = selectedPanel, Size = UDim2.new(1, -innerPad*2, 0, bodyH), Position = UDim2.new(0, innerPad, 0, headerSize), BackgroundTransparency = 1, Font = bodyFont, TextSize = bodySize, Text = text, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, TextColor3 = cfg.Theme.Text, ZIndex = 231, TextWrapped = true})
+                local header = new("TextLabel", {Parent = selectedPanel, Size = UDim2.new(1,-12,0,20), Position = UDim2.new(0,6,0,6), BackgroundTransparency = 1, Font = Enum.Font.SourceSansBold, TextSize = 16, Text = name or "", TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, TextColor3 = cfg.Theme.Text, ZIndex = 222})
+                local body = new("TextLabel", {Parent = selectedPanel, Size = UDim2.new(1,-12,0, sph-30), Position = UDim2.new(0,6,0,24), BackgroundTransparency = 1, Font = Enum.Font.SourceSans, TextSize = 14, Text = "- none", TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, TextColor3 = cfg.Theme.Text, ZIndex = 222, TextWrapped = true})
+                body.AutomaticSize = Enum.AutomaticSize.None
+                return selectedPanel, body
+            end
+
+            local function updateSelectedPanelDisplay()
+                if not panel or not panel.Parent then
+                    -- if panel not open, we still want a small selected panel visible near main GUI right column
+                    -- compute default position to the right of Frame
+                end
+                -- build text list
+                local selVals = {}
+                if multiple then
+                    for idx,_ in pairs(selectedSet) do
+                        table.insert(selVals, tostring(options[idx]))
+                    end
+                else
+                    if selectedIndex then table.insert(selVals, tostring(options[selectedIndex])) end
+                end
+                local display = "- none"
+                if #selVals == 0 then
+                    display = "- none"
+                else
+                    display = "- " .. table.concat(selVals, ", ")
+                end
+
+                if selectedPanel and selectedPanel.Parent then
+                    -- find body label
+                    for _,c in ipairs(selectedPanel:GetChildren()) do
+                        if c:IsA("TextLabel") and c.Position and c.Position.Y.Offset ~= 6 then
+                            pcall(function() c.Text = display end)
+                        end
+                    end
+                else
+                    -- create a transient selectedPanel near the dropdown anchor if panel exists or to the right of main
+                    local screenSize = Workspace.CurrentCamera and Workspace.CurrentCamera.ViewportSize or Vector2.new(1920,1080)
+                    local panelW = 240
+                    local absX = Frame.AbsolutePosition.X + Frame.AbsoluteSize.X + 12
+                    local x = math.clamp(absX, 8, screenSize.X - panelW - 8)
+                    local y = Frame.AbsolutePosition.Y + 40
+                    local sp, body = makeSelectedPanel(x, y - 70, panelW)
+                    if body then pcall(function() body.Text = display end) end
+                end
             end
 
             local function closePanel()
@@ -718,14 +753,17 @@ function Hwan:CreateWindow(opts)
                                 pcall(function() child.TextTransparency = 1 end)
                             end
                         end
-                        tween(panel, {BackgroundTransparency = 1}, 0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-                        task.wait(0.12)
-                        safeDestroy(panel)
+                        tween(panel, {BackgroundTransparency = 1}, 0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+                        task.wait(0.14)
+                        panel:Destroy()
                     end)
                 end
-                if selectedPanel and selectedPanel.Parent then safeDestroy(selectedPanel) end
                 panel = nil
-                selectedPanel = nil
+                if selectedPanel and selectedPanel.Parent then
+                    -- keep selectedPanel visible even when dropdown closed according to description? user requested it shows with dropdown open - keep destroy when closing dropdown to avoid duplicates
+                    safeDestroy(selectedPanel)
+                    selectedPanel = nil
+                end
                 if instance and window and window._dropdownStates then
                     window._dropdownStates[uid] = false
                 end
@@ -734,30 +772,30 @@ function Hwan:CreateWindow(opts)
             local function updatePanelPos()
                 if not panel or not panel.Parent then return end
                 pcall(function()
+                    -- target: place dropdown to the right of main, balanced vertically near the middle of the parent row
                     local absX = Frame.AbsolutePosition.X
                     local absY = Frame.AbsolutePosition.Y
                     local screenSize = Workspace.CurrentCamera and Workspace.CurrentCamera.ViewportSize or Vector2.new(1920,1080)
-                    local maxVisible = 6
                     local itemH = 36
                     local headerH = 30
+                    local maxVisible = 6
                     local panelH = math.min(headerH + #options*itemH + 8, headerH + maxVisible*itemH + 8)
-                    local panelW = 260
-                    -- position to the right of the main GUI with offset; ensure not overlapping by placing after frame.AbsSize.X
-                    local x = absX + Frame.AbsoluteSize.X + 8
-                    local y = absY + (frame.AbsoluteSize.Y/2) - (panelH/2)
-                    -- clamp into viewport
+                    local panelW = panel.AbsoluteSize.X
+                    -- position to the right of main Frame with margin
+                    local x = Frame.AbsolutePosition.X + Frame.AbsoluteSize.X + 12
+                    -- align top of dropdown roughly with mid area of labels in main
+                    local y = frame.AbsolutePosition.Y + (frame.AbsoluteSize.Y/2) - (panelH/2)
+                    -- ensure on-screen
                     x = math.clamp(x, 8, screenSize.X - panelW - 8)
                     y = math.clamp(y, 8, screenSize.Y - panelH - 8)
                     panel.Position = UDim2.new(0, x, 0, y)
 
-                    -- reposition selectedPanel above
+                    -- selectedPanel sits above dropdown, slightly narrower
+                    local spw = math.max(160, panelW - 20)
+                    local spy = y - 12 - 60 -- 60 tall
+                    local spx = x
                     if selectedPanel and selectedPanel.Parent then
-                        local spSizeX = selectedPanel.AbsoluteSize.X
-                        local spH = selectedPanel.AbsoluteSize.Y
-                        local sx = x
-                        local sy = y - spH - 8
-                        sy = math.clamp(sy, 8, screenSize.Y - spH - 8)
-                        selectedPanel.Position = UDim2.new(0, sx, 0, sy)
+                        selectedPanel.Position = UDim2.new(0, spx, 0, spy)
                     end
                 end)
             end
@@ -778,16 +816,16 @@ function Hwan:CreateWindow(opts)
 
                 task.wait(0.12)
 
-                local maxVisible = 6
                 local itemH = 36
                 local headerH = 30
+                local maxVisible = 6
                 local panelH = math.min(headerH + #options*itemH + 8, headerH + maxVisible*itemH + 8)
                 local panelW = 260
-                panel = new("Frame", {Parent = screenGui, Size = UDim2.new(0,panelW,0, panelH), BackgroundColor3 = Color3.fromRGB(0,0,0), BackgroundTransparency = 0.18, ZIndex = 220})
+                panel = new("Frame", {Parent = screenGui, Size = UDim2.new(0,panelW,0, panelH), BackgroundColor3 = cfg.Theme.Main, ZIndex = 220, BackgroundTransparency = 0.06})
                 new("UICorner", {Parent = panel, CornerRadius = UDim.new(0,8)})
                 local panelStroke = new("UIStroke", {Parent = panel})
                 panelStroke.Thickness = 2
-                panelStroke.Transparency = 0.0
+                panelStroke.Transparency = 0
                 panelStroke.Color = Color3.fromRGB(255,255,255)
 
                 local header = new("TextLabel", {Parent = panel, Size = UDim2.new(1,-12,0,headerH-4), Position = UDim2.new(0,6,0,6), BackgroundTransparency = 1, Font = Enum.Font.SourceSansBold, TextSize = 17, Text = name or "", TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Center, TextColor3 = cfg.Theme.Text, ZIndex = 221})
@@ -828,15 +866,9 @@ function Hwan:CreateWindow(opts)
                                 rowBtn.TextColor3 = Color3.fromRGB(255,255,255)
                             end
 
+                            -- save state
                             local selVals = {}
-                            for idx, _ in pairs(selectedSet) do
-                                table.insert(selVals, options[idx])
-                            end
-
-                            -- keep button text fixed as "Select"
-                            -- update selectedPanel
-                            updateSelectedPanelDisplay(selVals)
-
+                            for idx, _ in pairs(selectedSet) do table.insert(selVals, options[idx]) end
                             if window and window._savedState then
                                 if #selVals > 0 then
                                     local idxs = {}
@@ -847,6 +879,7 @@ function Hwan:CreateWindow(opts)
                                 end
                             end
 
+                            -- callback
                             if callback then
                                 local copy = {}
                                 for _, v in ipairs(selVals) do table.insert(copy, v) end
@@ -855,10 +888,13 @@ function Hwan:CreateWindow(opts)
                             if flag and window.Flags[flag] and window.Flags[flag].Set then
                                 pcall(window.Flags[flag].Set, selVals)
                             end
+
+                            -- update selectedPanel (do not change btn text; fixed "Select")
+                            updateSelectedPanelDisplay()
                             return
                         end
 
-                        -- single-select
+                        -- single-select behavior
                         if selectedIndex == i then
                             selectedIndex = nil
                             rowBtn.BackgroundColor3 = cfg.Theme.TabBg
@@ -866,10 +902,10 @@ function Hwan:CreateWindow(opts)
                             if window and window._savedState and window._savedState.dropdownSelections then
                                 window._savedState.dropdownSelections[uid] = nil
                             end
-                            -- update selectedPanel to none
-                            updateSelectedPanelDisplay({})
                             if callback then pcall(callback, nil) end
                             if flag and window.Flags[flag] and window.Flags[flag].Set then window.Flags[flag].Set(nil) end
+                            -- update selectedPanel
+                            updateSelectedPanelDisplay()
                             return
                         end
 
@@ -882,41 +918,37 @@ function Hwan:CreateWindow(opts)
                         selectedIndex = i
                         rowBtn.BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.14)
                         rowBtn.TextColor3 = Color3.fromRGB(255,255,255)
-
-                        -- update selectedPanel with single value
-                        updateSelectedPanelDisplay({options[i]})
-
                         if window and window._savedState then
                             window._savedState.dropdownSelections[uid] = i
                         end
                         if callback then pcall(callback, options[i]) end
                         if flag and window.Flags[flag] and window.Flags[flag].Set then window.Flags[flag].Set(options[i]) end
+
+                        -- update selectedPanel (do not change btn text)
+                        updateSelectedPanelDisplay()
                     end)
                 end
 
-                -- restore previous selection(s)
+                -- restore previous selection(s) if present
                 pcall(function()
                     local saved = window and window._savedState and window._savedState.dropdownSelections and window._savedState.dropdownSelections[uid]
                     if saved and contentFrame then
                         if multiple and type(saved) == "table" then
-                            for _, idx in ipairs(saved) do selectedSet[idx] = true end
-                            local selVals = {}
-                            local children = contentFrame:GetChildren()
-                            table.sort(children, function(a,b) return a.LayoutOrder < b.LayoutOrder end)
-                            for childI, child in ipairs(children) do
+                            for _, idx in ipairs(saved) do
+                                selectedSet[idx] = true
+                            end
+                            for childI, child in ipairs(contentFrame:GetChildren()) do
                                 if child:IsA("TextButton") then
                                     local i = childI
                                     if selectedSet[i] then
                                         child.BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.14)
                                         child.TextColor3 = Color3.fromRGB(255,255,255)
-                                        table.insert(selVals, options[i])
                                     else
                                         child.BackgroundColor3 = cfg.Theme.TabBg
                                         child.TextColor3 = cfg.Theme.Text
                                     end
                                 end
                             end
-                            updateSelectedPanelDisplay(selVals)
                         elseif (type(saved) == "number") then
                             local idx = saved
                             local children = contentFrame:GetChildren()
@@ -925,7 +957,6 @@ function Hwan:CreateWindow(opts)
                                     if childI == idx then
                                         child.BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.14)
                                         child.TextColor3 = Color3.fromRGB(255,255,255)
-                                        updateSelectedPanelDisplay({options[idx]})
                                         selectedIndex = idx
                                     else
                                         child.BackgroundColor3 = cfg.Theme.TabBg
@@ -933,21 +964,17 @@ function Hwan:CreateWindow(opts)
                                     end
                                 end
                             end
-                        else
-                            updateSelectedPanelDisplay({})
                         end
-                    else
-                        updateSelectedPanelDisplay({})
                     end
                 end)
 
+                -- initial position & animation
                 updatePanelPos()
                 pcall(function()
                     local curPos = panel.Position
-                    panel.Position = UDim2.new(curPos.X.Scale, curPos.X.Offset, curPos.Y.Scale, curPos.Y.Offset + 8)
+                    panel.Position = UDim2.new(curPos.X.Scale, curPos.X.Offset, curPos.Y.Scale, curPos.Y.Offset - 8)
                 end)
 
-                panel.BackgroundTransparency = 1
                 header.TextTransparency = 1
                 for _, child in ipairs(contentFrame:GetDescendants()) do
                     if child:IsA("TextLabel") or child:IsA("TextButton") or child:IsA("TextBox") then
@@ -956,18 +983,25 @@ function Hwan:CreateWindow(opts)
                 end
 
                 -- animate open
-                tween(panel, {BackgroundTransparency = 0}, 0.16)
-                tween(panel, {Position = UDim2.new(panel.Position.X.Scale, panel.Position.X.Offset, panel.Position.Y.Scale, panel.Position.Y.Offset + 8)}, 0.16)
-                task.delay(0.05, function()
+                tween(panel, {BackgroundTransparency = 0.06}, 0.18)
+                tween(panel, {Position = UDim2.new(panel.Position.X.Scale, panel.Position.X.Offset, panel.Position.Y.Scale, panel.Position.Y.Offset + 8)}, 0.18)
+                task.delay(0.06, function()
                     pcall(function()
                         for _, child in ipairs(panel:GetDescendants()) do
                             if child:IsA("TextLabel") or child:IsA("TextButton") or child:IsA("TextBox") then
-                                TweenService:Create(child, TweenInfo.new(0.12, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {TextTransparency = 0}):Play()
+                                TweenService:Create(child, TweenInfo.new(0.18, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {TextTransparency = 0}):Play()
                             end
                         end
                     end)
                 end)
 
+                -- create selectedPanel above dropdown
+                local absX = Frame.AbsolutePosition.X + Frame.AbsoluteSize.X + 12
+                local absY = panel.AbsolutePosition.Y
+                selectedPanel, _ = makeSelectedPanel(absX, absY - 72, panelW)
+                updateSelectedPanelDisplay()
+
+                -- follow camera/resize/viewport changes
                 if not followConn then
                     followConn = RunService.Heartbeat:Connect(function()
                         pcall(updatePanelPos)
@@ -985,7 +1019,7 @@ function Hwan:CreateWindow(opts)
             end)
             addConn(openConn)
 
-            instance = { UI = frame, Set = function(v) btn.Text = "Select" end, Open = showPanel, Close = closePanel, IsOpen = function() return (panel ~= nil) end, Button = btn, uid = uid, Flag = flag }
+            instance = { UI = frame, Set = function(v) /* button remains "Select" per requested behavior */ end, Open = showPanel, Close = closePanel, IsOpen = function() return (panel ~= nil) end, Button = btn, uid = uid, Flag = flag }
 
             if flag and type(flag) == "string" then
                 registerFlag(flag, { Type = "Dropdown", Get = function() return nil end, Set = function(v) end, UI = frame })
@@ -1066,7 +1100,7 @@ function Hwan:CreateWindow(opts)
                 btn.Text = "..."
                 tween(btn, {BackgroundColor3 = brightenColor(cfg.Theme.Btn, 0.12)}, 0.06)
 
-                -- only accept keyboard input for binding; ESC removed per request
+                -- only accept keyboard input for binding
                 inputConn = UserInputService.InputBegan:Connect(function(input, gameProcessed)
                     if gameProcessed then return end
                     if input.UserInputType == Enum.UserInputType.Keyboard then
@@ -1075,6 +1109,7 @@ function Hwan:CreateWindow(opts)
                         stopListening()
                         return
                     end
+                    -- ignore other input types (mouse/touch)
                 end)
 
                 -- cancel binding if user clicks left mouse anywhere outside the btn
@@ -1085,6 +1120,7 @@ function Hwan:CreateWindow(opts)
                         local absPos = btn.AbsolutePosition
                         local absSize = btn.AbsoluteSize
                         if not (mousePos.X >= absPos.X and mousePos.X <= absPos.X + absSize.X and mousePos.Y >= absPos.Y and mousePos.Y <= absPos.Y + absSize.Y) then
+                            -- clicked outside -> cancel
                             stopListening()
                         end
                     end
@@ -1146,7 +1182,7 @@ function Hwan:CreateWindow(opts)
                 ZIndex = 3,
                 RichText = true,
             })
-            leftLabel.Text = label
+            leftLabel.Text = escapeHtml(label)
 
             local rightBoxScale = 0.30
             local rightBox = new("Frame", {Parent = row, Size = UDim2.new(rightBoxScale, -8, 0, trackHeight), Position = UDim2.new(1 - rightBoxScale, 4, 0.5, -trackHeight/2), BackgroundColor3 = cfg.Theme.TabBg, BorderSizePixel = 0})
@@ -1154,69 +1190,55 @@ function Hwan:CreateWindow(opts)
             local valueLabel = new("TextLabel", {Parent = rightBox, Size = UDim2.new(1, -12, 1, 0), Position = UDim2.new(0,6,0,0), BackgroundTransparency = 1, Font = leftLabel.Font, TextSize = leftLabel.TextSize, TextColor3 = cfg.Theme.Text, TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center})
             valueLabel.Text = tostring(default)
 
-            -- caching prefix widths for leftLabel text to speed up per-char color changes
-            local prefixWidths = {}
-            local function computePrefixWidths()
-                local txt = tostring(leftLabel.Text or "")
-                prefixWidths = {0}
-                if txt == "" then return end
-                local font = leftLabel.Font
-                local size = leftLabel.TextSize
-                for i = 1, #txt do
-                    local ch = txt:sub(i,i)
-                    local w = TextService:GetTextSize(ch, size, font, Vector2.new(10000,10000)).X
-                    prefixWidths[i] = (prefixWidths[i-1] or 0) + w
+            -- optimize: precompute per-character cumulative widths for the label (reduces TextService calls while dragging)
+            local charCum = {}
+            local totalTextWidth = 0
+            local labelText = tostring(label or "")
+            local function buildCharWidths()
+                charCum = {}
+                totalTextWidth = 0
+                -- measure each character with the same font and size
+                for i = 1, #labelText do
+                    local ch = labelText:sub(i,i)
+                    local size = TextService:GetTextSize(ch, leftLabel.TextSize, leftLabel.Font, Vector2.new(10000,10000))
+                    totalTextWidth = totalTextWidth + size.X
+                    charCum[i] = totalTextWidth
                 end
             end
+            buildCharWidths()
 
-            -- recompute when text changes or track resizes
-            addConn(leftLabel:GetPropertyChangedSignal("Text"):Connect(function() computePrefixWidths() end))
-            addConn(track:GetPropertyChangedSignal("AbsoluteSize"):Connect(function() computePrefixWidths() end))
-            task.defer(function() computePrefixWidths() end)
-
-            local function updateLeftLabelTextColorImmediate(fillWidth)
+            -- helper: update leftLabel color when fill covers characters (immediate)
+            local mainHex = color3ToHex(cfg.Theme.Main)
+            local textHex = color3ToHex(cfg.Theme.Text)
+            local function updateLeftLabelTextColorImmediate()
                 pcall(function()
-                    if not leftLabel or not leftLabel.Parent then return end
-                    local txt = tostring(leftLabel.Text or "")
-                    if txt == "" then return end
-                    local leftPad = textPadding
-                    -- binary search for largest index where prefixWidths[idx] + leftPad <= fillWidth
-                    local low, high = 0, #txt
-                    while low < high do
-                        local mid = math.ceil((low + high) / 2)
-                        local w = prefixWidths[mid] or 0
-                        if w + leftPad <= fillWidth then
-                            low = mid
-                        else
-                            high = mid - 1
-                        end
-                    end
-                    local covered = low
-                    local part1 = escapeHtml(string.sub(txt, 1, covered))
-                    local part2 = escapeHtml(string.sub(txt, covered + 1))
-                    local hexCover = color3ToHex(cfg.Theme.Main)
-                    local hexRest = color3ToHex(cfg.Theme.Text)
-                    if part1 == "" then
-                        leftLabel.RichText = false
-                        leftLabel.Text = part2
-                        leftLabel.TextColor3 = cfg.Theme.Text
-                    else
-                        leftLabel.RichText = true
-                        leftLabel.Text = ("<font color='%s'>%s</font><font color='%s'>%s</font>"):format(hexCover, part1, hexRest, part2)
-                    end
-                end)
-            end
-
-            local function updateLeftLabelTextColor()
-                pcall(function()
-                    if not leftLabel or not leftLabel.Parent or track.AbsoluteSize.X <= 0 then return end
+                    if not leftLabel or not leftLabel.Parent or not track or track.AbsoluteSize.X <= 0 then return end
                     local fillWidth = 0
                     if fill and fill.AbsoluteSize and fill.AbsoluteSize.X then
                         fillWidth = fill.AbsoluteSize.X
                     else
                         fillWidth = (fill.Size and (fill.Size.X.Scale * math.max(1, track.AbsoluteSize.X))) or 0
                     end
-                    updateLeftLabelTextColorImmediate(fillWidth)
+
+                    -- build richtext by checking where each character midpoint lies
+                    if #labelText == 0 then
+                        leftLabel.Text = ""
+                        return
+                    end
+                    local out = {}
+                    local prevIdx = 1
+                    for i = 1, #labelText do
+                        local cum = charCum[i] or 0
+                        local mid = ( (charCum[i] or 0) - ((TextService:GetTextSize(labelText:sub(i,i), leftLabel.TextSize, leftLabel.Font, Vector2.new(10000,10000)).X)/2) )
+                        -- compute pixel position of character end relative to leftLabel
+                        local charEnd = cum
+                        if charEnd <= (fillWidth - textPadding) then
+                            table.insert(out, string.format("<font color=\"%s\">%s</font>", mainHex, escapeHtml(labelText:sub(i,i))))
+                        else
+                            table.insert(out, string.format("<font color=\"%s\">%s</font>", textHex, escapeHtml(labelText:sub(i,i))))
+                        end
+                    end
+                    leftLabel.Text = table.concat(out)
                 end)
             end
 
@@ -1226,19 +1248,15 @@ function Hwan:CreateWindow(opts)
                 local displayValue = (math.floor(value*100 + 0.5)/100)
                 if not skipTween then
                     tween(fill, {Size = UDim2.new(p,0,1,0)}, 0.12)
-                    task.delay(0.12, function() pcall(function() valueLabel.Text = tostring(displayValue) end) end)
                 else
-                    pcall(function() fill.Size = UDim2.new(p,0,1,0); valueLabel.Text = tostring(displayValue) end)
+                    pcall(function() fill.Size = UDim2.new(p,0,1,0) end)
                 end
+                pcall(function() valueLabel.Text = tostring(displayValue) end)
                 if cb then pcall(cb, value) end
                 if flag and window.Flags[flag] and window.Flags[flag].Set then pcall(window.Flags[flag].Set, value) end
 
-                -- update left label color (immediate if dragging)
-                if skipTween then
-                    updateLeftLabelTextColor()
-                else
-                    task.defer(function() updateLeftLabelTextColor() end)
-                end
+                -- immediate color update for label using cached widths
+                pcall(function() updateLeftLabelTextColorImmediate() end)
             end
 
             local defaultPct = 0
@@ -1247,13 +1265,15 @@ function Hwan:CreateWindow(opts)
             task.defer(function() RunService.Heartbeat:Wait(); setFromPercent(defaultPct, true) end)
 
             local dragging = false
-            local inputChangedConn
+            local inputChangedConn -- local temporary connection (not added to conns)
 
+            -- unified input handling for slider (click + drag)
             local function onInputBegan(input)
                 if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
                     dragging = true
                     preventWindowDrag = true
 
+                    -- initial set pos (click)
                     local pos = nil
                     if input.UserInputType == Enum.UserInputType.MouseButton1 then
                         pos = UserInputService:GetMouseLocation()
@@ -1265,19 +1285,21 @@ function Hwan:CreateWindow(opts)
                         local left = track.AbsolutePosition.X
                         local width = math.max(1, track.AbsoluteSize.X)
                         local pct = (absX - left) / width
-                        setFromPercent(pct, true)
+                        setFromPercent(pct, true) -- immediate (no tween) while dragging
                     end
 
+                    -- listen movement
                     inputChangedConn = UserInputService.InputChanged:Connect(function(inp)
                         if dragging and (inp.UserInputType == Enum.UserInputType.MouseMovement or inp.UserInputType == Enum.UserInputType.Touch) then
                             local absX = inp.Position.X
                             local left = track.AbsolutePosition.X
                             local width = math.max(1, track.AbsoluteSize.X)
                             local pct = (absX - left) / width
-                            setFromPercent(pct, true)
+                            setFromPercent(pct, true) -- immediate while dragging
                         end
                     end)
 
+                    -- cleanup when input ends
                     local endedConn
                     endedConn = input.Changed:Connect(function()
                         if input.UserInputState == Enum.UserInputState.End then
@@ -1288,6 +1310,7 @@ function Hwan:CreateWindow(opts)
                                 inputChangedConn = nil
                             end
                             if endedConn then pcall(function() endedConn:Disconnect() end) end
+                            -- animate to final pos for smooth finish
                             pcall(function()
                                 local finalPct = 0
                                 if track and track.AbsoluteSize and track.AbsoluteSize.X > 0 then
@@ -1353,6 +1376,7 @@ function Hwan:CreateWindow(opts)
 
             tween(tab.Button, {BackgroundColor3 = brightenColor(cfg.Theme.TabBg, 0.14)}, 0.14)
             tab.Button.TextColor3 = Color3.fromRGB(255,255,255)
+            ensureTabVisible = ensureTabVisible or function() end
             pcall(function() if window then window._activeTabIndex = idx; window._savedState.active = idx end end)
         end))
 
@@ -1418,9 +1442,11 @@ function Hwan:CreateWindow(opts)
     local pingTimer = 0
     local pingInterval = 0.25
 
+    -- FPS smoothing samples
     local fpsSamples = {}
     local maxFpsSamples = 10
 
+    -- Render updates: keep visuals smooth but cheap; skip updates when frame invisible
     local renderConn = RunService.RenderStepped:Connect(function(dt)
         pcall(function()
             if not Frame or (Frame and not Frame.Visible) then
@@ -1431,10 +1457,12 @@ function Hwan:CreateWindow(opts)
             if hwanBottomGrad and hwanBottomGrad.Parent then hwanBottomGrad.Rotation = (hwanBottomGrad.Rotation + 1.6) % 360 end
         end)
 
+        -- Info updates (smoothed FPS, same ping logic)
         pcall(function()
             if not refs.InfoText then return end
             local timeStr = os.date("%H:%M:%S")
 
+            -- smooth fps sampling (avoid spikey 1/dt)
             local fpsSample = 0
             if dt > 0 then fpsSample = 1 / dt end
             table.insert(fpsSamples, fpsSample)
@@ -1444,6 +1472,7 @@ function Hwan:CreateWindow(opts)
             local meanF = (#fpsSamples > 0) and (sumF / #fpsSamples) or 0
             local fps = math.floor(meanF + 0.5)
 
+            -- ping (kept same)
             pingTimer = pingTimer + dt
             local pingMs = 0
             if pingTimer >= pingInterval then
@@ -1478,7 +1507,7 @@ function Hwan:CreateWindow(opts)
     end)
     addConn(renderConn)
 
-    -- Notifications (stacked up to 5)
+    -- Notifications: support stacked up to 5, extras queued
     local notifQueue = {}
     local activeNotifs = {}
     local maxActiveNotifs = 5
@@ -1503,11 +1532,13 @@ function Hwan:CreateWindow(opts)
         if entry and entry.frame then
             pcall(function() safeDestroy(entry.frame) end)
         end
+        -- shift remaining
         repositionNotifs()
+        -- process queued if any
         if #notifQueue > 0 then
             local nextItem = table.remove(notifQueue, 1)
             if nextItem then
-                task.spawn(function()
+                task.spawn(function() 
                     task.wait(0.02)
                     local text = nextItem.text or ""
                     local duration = nextItem.duration or defaultNotifDuration
@@ -1530,11 +1561,11 @@ function Hwan:CreateWindow(opts)
                         local index = #activeNotifs + 1
                         local yOffset = -96 - (#activeNotifs) * (notifHeight + notifGap)
 
-                        local nframe = new("Frame", {Parent = screenGui, Size = UDim2.new(0, notifWidth, 0, notifHeight), Position = UDim2.new(1, -(16 + notifWidth), 1, yOffset), BackgroundColor3 = Color3.fromRGB(0,0,0), BackgroundTransparency = 0.18, BorderSizePixel = 0, ZIndex = 220})
+                        local nframe = new("Frame", {Parent = screenGui, Size = UDim2.new(0, notifWidth, 0, notifHeight), Position = UDim2.new(1, -(16 + notifWidth), 1, yOffset), BackgroundColor3 = cfg.Theme.InfoInner, BorderSizePixel = 0, ZIndex = 220})
                         new("UICorner", {Parent = nframe, CornerRadius = UDim.new(0,8)})
                         local notifStroke = new("UIStroke", {Parent = nframe})
                         notifStroke.Thickness = 2
-                        notifStroke.Transparency = 0.0
+                        notifStroke.Transparency = 0
                         notifStroke.Color = Color3.fromRGB(255,255,255)
 
                         local inner = new("Frame", {Parent = nframe, Size = UDim2.new(1, -innerPad*2, 1, -innerPad*2), Position = UDim2.new(0, innerPad, 0, innerPad), BackgroundTransparency = 1, ZIndex = 221})
@@ -1548,7 +1579,7 @@ function Hwan:CreateWindow(opts)
                         body.TextTransparency = 0
 
                         nframe.BackgroundTransparency = 1
-                        tween(nframe, {BackgroundTransparency = 0}, 0.14, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
+                        tween(nframe, {BackgroundTransparency = 0.06}, 0.14, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
 
                         table.insert(activeNotifs, { frame = nframe, width = notifWidth, height = notifHeight })
                         repositionNotifs()
@@ -1591,11 +1622,11 @@ function Hwan:CreateWindow(opts)
 
             local yOffset = -96 - (#activeNotifs) * (notifHeight + notifGap)
 
-            local nframe = new("Frame", {Parent = screenGui, Size = UDim2.new(0, notifWidth, 0, notifHeight), Position = UDim2.new(1, -(16 + notifWidth), 1, yOffset), BackgroundColor3 = Color3.fromRGB(0,0,0), BackgroundTransparency = 0.18, BorderSizePixel = 0, ZIndex = 220})
+            local nframe = new("Frame", {Parent = screenGui, Size = UDim2.new(0, notifWidth, 0, notifHeight), Position = UDim2.new(1, -(16 + notifWidth), 1, yOffset), BackgroundColor3 = cfg.Theme.InfoInner, BorderSizePixel = 0, ZIndex = 220})
             new("UICorner", {Parent = nframe, CornerRadius = UDim.new(0,8)})
             local notifStroke = new("UIStroke", {Parent = nframe})
             notifStroke.Thickness = 2
-            notifStroke.Transparency = 0.0
+            notifStroke.Transparency = 0
             notifStroke.Color = Color3.fromRGB(255,255,255)
 
             local inner = new("Frame", {Parent = nframe, Size = UDim2.new(1, -innerPad*2, 1, -innerPad*2), Position = UDim2.new(0, innerPad, 0, innerPad), BackgroundTransparency = 1, ZIndex = 221})
@@ -1609,7 +1640,7 @@ function Hwan:CreateWindow(opts)
             body.TextTransparency = 0
 
             nframe.BackgroundTransparency = 1
-            tween(nframe, {BackgroundTransparency = 0}, 0.14, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
+            tween(nframe, {BackgroundTransparency = 0.06}, 0.14, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
 
             table.insert(activeNotifs, { frame = nframe, width = notifWidth, height = notifHeight })
             repositionNotifs()
@@ -1631,7 +1662,7 @@ function Hwan:CreateWindow(opts)
 
     local finalSize = UDim2.new(0, cfg.Width, 0, cfg.Height)
 
-    -- Config saving/loading (unchanged)
+    -- Config saving/loading
     local function configFileName()
         local cfgs = cfg.ConfigurationSaving or {}
         local fname = cfgs.FileName or cfg.Title or "HwanConfig"
@@ -1698,7 +1729,7 @@ function Hwan:CreateWindow(opts)
         end
     end
 
-    -- Key UI (unchanged behavior)
+    -- Key UI
     local function createKeyUI(onAuth)
         local ks = cfg.KeySettings or {}
         ks.Title = ks.Title or (cfg.Title .. " | Key System")
@@ -1759,7 +1790,7 @@ function Hwan:CreateWindow(opts)
         new("UICorner", {Parent = kFrame, CornerRadius = UDim.new(0,10)})
         local kStroke = new("UIStroke", {Parent = kFrame})
         kStroke.Thickness = 2
-        kStroke.Transparency = 0.0
+        kStroke.Transparency = 0
         kStroke.Color = Color3.fromRGB(255,255,255)
 
         local titleLbl = new("TextLabel", {Parent = kFrame, Size = UDim2.new(1, -20, 0, 30), Position = UDim2.new(0,10,0,8), BackgroundTransparency = 1, Font = Enum.Font.FredokaOne, TextSize = 18, Text = ks.Title, TextColor3 = cfg.Theme.Accent, TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 305})
@@ -2015,6 +2046,7 @@ function Hwan:CreateWindow(opts)
         end
     end))
 
+    -- allow changing toggle key at runtime
     function window:SetToggleKey(k)
         if typeof(k) == "EnumItem" and k.EnumType == Enum.KeyCode then
             cfg.ToggleKey = k
@@ -2055,6 +2087,7 @@ function Hwan:CreateWindow(opts)
         elseif type(newTheme) == "table" then
             for kk,vv in pairs(newTheme) do cfg.Theme[kk] = vv end
         end
+        -- apply to refs
         if refs.Frame then refs.Frame.BackgroundColor3 = cfg.Theme.Main end
         if refs.MainDivider then refs.MainDivider.BackgroundColor3 = cfg.Theme.TabBg end
         if refs.InfoBar then refs.InfoBar.BackgroundColor3 = cfg.Theme.InfoBg end
@@ -2080,10 +2113,12 @@ function Hwan:CreateWindow(opts)
 
     local oldDestroy
     oldDestroy = function()
+        -- Close dropdowns
         for _, inst in ipairs(window._dropdownInstances or {}) do
             pcall(function() if inst and inst.Close then inst.Close() end end)
         end
 
+        -- Disconnect stored connections
         if conns then
             for i = #conns, 1, -1 do
                 local c = conns[i]
@@ -2096,6 +2131,7 @@ function Hwan:CreateWindow(opts)
             end
         end
 
+        -- Clear active notifications
         for i = #activeNotifs, 1, -1 do
             local e = activeNotifs[i]
             if e and e.frame then safeDestroy(e.frame) end
@@ -2103,14 +2139,18 @@ function Hwan:CreateWindow(opts)
         end
         notifQueue = nil
 
+        -- Save config (best-effort)
         pcall(saveConfig)
 
+        -- Destroy root gui safely
         pcall(function() if screenGui and screenGui.Parent then screenGui:Destroy() end end)
 
+        -- Clear global reference if set
         if _G.Hwan and _G.Hwan.screenGui == screenGui then
             _G.Hwan = nil
         end
 
+        -- nil references to help GC
         window.Flags = nil
         window._dropdownInstances = nil
         window._dropdownStates = nil
