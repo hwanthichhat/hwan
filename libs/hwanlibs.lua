@@ -727,47 +727,33 @@ function tab:CreateDropdown(opts)
         end
     end
 
-    local function computePanelSizes(maxVisible)
-        maxVisible = maxVisible or 6
-        local itemH = 36
-        -- big panel height: no header now, just items + padding
-        local bigPanelH = math.min(#options*itemH + 16, maxVisible*itemH + 16)
-        -- small panel height: height needed to show selected text (wrapped) + padding
-        local selText = ""
-        if multiple then
-            local vals = {}
-            for i,_ in pairs(selectedSet) do table.insert(vals, tostring(options[i])) end
-            if #vals == 0 then selText = "" else selText = "- " .. table.concat(vals, ", ") end
-        else
-            if selectedIndex then selText = "- " .. tostring(options[selectedIndex]) else selText = "" end
+    -- compute fixed panel heights based on Frame size (so they line up with GUI)
+    local function computeFixedHeights()
+        -- safety: if Frame not ready, use defaults
+        local frameH = 400
+        if Frame and Frame.AbsoluteSize and Frame.AbsoluteSize.Y and Frame.AbsoluteSize.Y > 0 then
+            frameH = Frame.AbsoluteSize.Y
         end
-        local maxW = 260 - 24
-        local bodyFont = Enum.Font.SourceSans
-        local bodySize = 16
-        local textSize = TextService:GetTextSize(selText, bodySize, bodyFont, Vector2.new(math.max(10, maxW), 1000))
-        local smallBodyH = math.max(20, math.ceil(textSize.Y))
-        local smallPanelH = math.max(48, smallBodyH + 12)
-        return smallPanelH, bigPanelH
+        -- small panel: ~18% of frame height, at least 56, at most 140
+        local smallH = math.clamp(math.floor(frameH * 0.18), 56, 140)
+        -- big panel: remaining space minus small gap; ensure at least 140
+        local gap = 8
+        local bigH = math.clamp(math.floor(frameH * 0.65), 140, math.max(160, frameH - smallH - gap))
+        return smallH, bigH
     end
 
-    local function updatePanelPos()
+    local function updatePanelPos_fixed()
         if not panelBig and not panelSmall then return end
         pcall(function()
             local screenSize = Workspace.CurrentCamera and Workspace.CurrentCamera.ViewportSize or Vector2.new(1920,1080)
             local panelW = 260
-            local smallH, bigH = computePanelSizes(6)
+            local smallH, bigH = computeFixedHeights()
 
-            -- desired middle Y: use main divider position (dividerY offset inside Frame)
-            local mdY = Frame.AbsolutePosition.Y + dividerY + 8
-            local gap = 8
-            local smallY = math.clamp(mdY - smallH - (gap/2), 8, screenSize.Y - smallH - 8)
-            local bigY = math.clamp(mdY + (gap/2), 8, screenSize.Y - bigH - 8)
-
-            -- If overlapping, push big down
-            if smallY + smallH + 6 > bigY then
-                smallY = math.clamp(frame.AbsolutePosition.Y + (frame.AbsoluteSize.Y/2) - smallH - 6, 8, screenSize.Y - smallH - 8)
-                bigY = math.clamp(smallY + smallH + 8, 8, screenSize.Y - bigH - 8)
-            end
+            -- Align small panel top with Frame top, and big panel bottom with Frame bottom
+            local frameTopY = Frame.AbsolutePosition.Y
+            local frameBottomY = Frame.AbsolutePosition.Y + Frame.AbsoluteSize.Y
+            local smallY = math.clamp(frameTopY, 8, screenSize.Y - smallH - 8)
+            local bigY = math.clamp(frameBottomY - bigH, 8, screenSize.Y - bigH - 8)
 
             local x = Frame.AbsolutePosition.X + Frame.AbsoluteSize.X + 8
             x = math.clamp(x, 8, screenSize.X - panelW - 8)
@@ -788,20 +774,27 @@ function tab:CreateDropdown(opts)
             local selText = ""
             if multiple then
                 local vals = {}
-                for i,_ in pairs(selectedSet) do table.insert(vals, tostring(options[i])) end
-                if #vals == 0 then selText = "" else selText = "- " .. table.concat(vals, ", ") end
+                -- keep order stable: iterate numeric indices in order
+                for i = 1, #options do
+                    if selectedSet[i] then table.insert(vals, tostring(options[i])) end
+                end
+                if #vals == 0 then selText = "" else selText = table.concat(vals, ", ") end
             else
-                if selectedIndex then selText = "- " .. tostring(options[selectedIndex]) else selText = "" end
+                if selectedIndex then selText = tostring(options[selectedIndex]) else selText = "" end
             end
 
+            -- format as requested: "Item 1, Item 2, Item 3, ..."
             txtLabel.Text = selText
-            local maxW = panelSmall.AbsoluteSize.X - 24
+
+            -- recompute size and scrollbar
+            local maxW = math.max(10, panelSmall.AbsoluteSize.X - 24)
             local bodyFont = Enum.Font.SourceSans
             local bodySize = 16
-            local textSize = TextService:GetTextSize(selText, bodySize, bodyFont, Vector2.new(math.max(1, maxW), 1000))
+            local textSize = TextService:GetTextSize(selText, bodySize, bodyFont, Vector2.new(maxW, 2000))
             local desiredH = math.max(20, math.ceil(textSize.Y))
             txtLabel.Size = UDim2.new(1, 0, 0, desiredH)
             content.CanvasSize = UDim2.new(0, 0, 0, desiredH)
+            -- if no selection, show nothing (empty)
         end)
     end
 
@@ -822,10 +815,9 @@ function tab:CreateDropdown(opts)
         task.wait(0.02)
 
         local panelW = 260
-        local maxVisible = 6
         local itemH = 36
 
-        local smallH, bigH = computePanelSizes(maxVisible)
+        local smallH, bigH = computeFixedHeights()
 
         -- small panel (no header)
         panelSmall = new("Frame", {Parent = screenGui, Size = UDim2.new(0, panelW, 0, smallH), BackgroundColor3 = cfg.Theme.Main, ZIndex = 220, BackgroundTransparency = 1})
@@ -835,7 +827,7 @@ function tab:CreateDropdown(opts)
         smallStroke.Transparency = 0.8
         smallStroke.Color = Color3.fromRGB(255,255,255)
 
-        local innerScroll = new("ScrollingFrame", {Parent = panelSmall, Name = "InnerScroll", Size = UDim2.new(1,-12,1, -12), Position = UDim2.new(0,6,0,6), BackgroundTransparency = 1, ScrollBarThickness = 6, CanvasSize = UDim2.new(0,0,0,0), VerticalScrollBarInset = Enum.ScrollBarInset.Always})
+        local innerScroll = new("ScrollingFrame", {Parent = panelSmall, Name = "InnerScroll", Size = UDim2.new(1,-12,1, -12), Position = UDim2.new(0,6,0,6), BackgroundTransparency = 1, ScrollBarThickness = 8, CanvasSize = UDim2.new(0,0,0,0), VerticalScrollBarInset = Enum.ScrollBarInset.Always})
         innerScroll.AutomaticCanvasSize = Enum.AutomaticSize.None
 
         local selTextLabel = new("TextLabel", {Parent = innerScroll, Name = "SelText", Size = UDim2.new(1,0,0,16), Position = UDim2.new(0,0,0,0), BackgroundTransparency = 1, Font = Enum.Font.SourceSans, TextSize = 16, Text = "", TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, TextColor3 = cfg.Theme.Text, TextWrapped = true})
@@ -849,7 +841,7 @@ function tab:CreateDropdown(opts)
         bigStroke.Transparency = 0.8
         bigStroke.Color = Color3.fromRGB(255,255,255)
 
-        local contentFrame = new("ScrollingFrame", {Parent = panelBig, Size = UDim2.new(1,-12,1,-12), Position = UDim2.new(0,6,0,6), BackgroundTransparency = 1, ScrollBarThickness = 6, CanvasSize = UDim2.new(0,0,0,#options * itemH), VerticalScrollBarInset = Enum.ScrollBarInset.Always})
+        local contentFrame = new("ScrollingFrame", {Parent = panelBig, Size = UDim2.new(1,-12,1,-12), Position = UDim2.new(0,6,0,6), BackgroundTransparency = 1, ScrollBarThickness = 8, CanvasSize = UDim2.new(0,0,0,#options * itemH), VerticalScrollBarInset = Enum.ScrollBarInset.Always})
         contentFrame.AutomaticCanvasSize = Enum.AutomaticSize.None
         contentFrame.CanvasPosition = Vector2.new(0,0)
 
@@ -966,6 +958,9 @@ function tab:CreateDropdown(opts)
             end
         end)
 
+        -- wait one render tick to ensure AbsoluteSize available, then position and refresh small text
+        RunService.Heartbeat:Wait()
+        updatePanelPos_fixed()
         refreshSmallPanelContent()
 
         panelSmall.BackgroundTransparency = 1
@@ -973,9 +968,9 @@ function tab:CreateDropdown(opts)
         tween(panelSmall, {BackgroundTransparency = 0}, 0.18)
         tween(panelBig, {BackgroundTransparency = 0}, 0.18)
 
-        updatePanelPos()
+        -- follow camera/resize
         if not followConn then
-            followConn = RunService.Heartbeat:Connect(function() pcall(updatePanelPos) end)
+            followConn = RunService.Heartbeat:Connect(function() pcall(updatePanelPos_fixed) end)
         end
 
         if instance and window and window._dropdownStates then window._dropdownStates[uid] = true end
