@@ -1,14 +1,4 @@
--- Hwan HUB (merged + updated)
--- Changes:
---  - Clean previous _G.Hwan GUI/conns if present (try best-effort)
---  - Dropdown: two panels (small top shows chosen items, big bottom shows selectable items)
---  - Dropdown button keeps text "Select"
---  - Panels positioned right beside main GUI; update positions on camera/resize
---  - Small panel text wraps and is scrollable if long
---  - Slider performance: cache text width, avoid GetTextSize in hot path, immediate fill updates while dragging
---  - Left label text becomes cfg.Theme.Main when fill covers it (i.e., appears "erased")
---  - Various pcall/task.defer adjustments to reduce overhead
-
+-- Hwan UI Library (HwanLibs)
 local Hwan = {}
 Hwan.__index = Hwan
 
